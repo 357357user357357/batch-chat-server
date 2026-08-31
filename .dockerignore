@@ -1,0 +1,9 @@
+.git
+.venv
+venv
+data
+*.db
+.env
+.gitignore
+README.md
+scripts
