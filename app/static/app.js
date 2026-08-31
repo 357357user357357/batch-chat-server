@@ -13,6 +13,8 @@ const state = {
   defaultModels: [],
   selectedModels: JSON.parse(localStorage.getItem("bc_models") || "null"),
   sending: false,
+  batches: [],
+  batchRefreshTimer: null,
 };
 
 const els = {
@@ -41,6 +43,15 @@ const els = {
   importTextarea: $("#import-textarea"),
   importStatus: $("#import-status"),
   importSubmit: $("#import-submit"),
+  batchBtn: $("#batch-btn"),
+  batchModal: $("#batch-modal"),
+  batchClose: $("#batch-close"),
+  batchModel: $("#batch-model"),
+  batchSystem: $("#batch-system"),
+  batchJsonl: $("#batch-jsonl"),
+  batchStatus: $("#batch-status"),
+  batchSubmit: $("#batch-submit"),
+  batchJobs: $("#batch-jobs"),
 };
 
 // ---------------------------------------------------------------
@@ -444,5 +455,114 @@ els.importSubmit.addEventListener("click", async () => {
     els.importStatus.textContent = `Import failed: ${err.message}`;
   } finally {
     els.importSubmit.disabled = false;
+  }
+});
+
+// ---------------------------------------------------------------
+// JSONL batch (like GCP Vertex AI / AWS Bedrock, via OpenRouter)
+// ---------------------------------------------------------------
+function openBatch() {
+  els.batchStatus.className = "import-status";
+  els.batchStatus.textContent = "";
+  els.batchModal.classList.remove("hidden");
+  loadBatches();
+}
+
+function closeBatch() {
+  els.batchModal.classList.add("hidden");
+  if (state.batchRefreshTimer) {
+    clearInterval(state.batchRefreshTimer);
+    state.batchRefreshTimer = null;
+  }
+}
+
+els.batchBtn.addEventListener("click", openBatch);
+els.batchClose.addEventListener("click", closeBatch);
+els.batchModal.addEventListener("click", (e) => {
+  if (e.target === els.batchModal) closeBatch();
+});
+
+async function loadBatches() {
+  try {
+    state.batches = await api("/api/batches");
+  } catch (err) {
+    state.batches = [];
+  }
+  renderBatchJobs();
+  const active = state.batches.some(
+    (b) => b.status !== "completed" && b.status !== "failed" &&
+           b.status !== "expired" && b.status !== "cancelled" && b.status !== "error"
+  );
+  if (active) {
+    // Keep refreshing while jobs are in flight, and pull in new conversations.
+    if (!state.batchRefreshTimer) {
+      state.batchRefreshTimer = setInterval(() => {
+        loadBatches();
+        loadConversations().catch(() => {});
+      }, 8000);
+    }
+  } else if (state.batchRefreshTimer) {
+    clearInterval(state.batchRefreshTimer);
+    state.batchRefreshTimer = null;
+  }
+}
+
+function renderBatchJobs() {
+  els.batchJobs.innerHTML = "";
+  if (!state.batches.length) {
+    els.batchJobs.textContent = "No batch jobs yet.";
+    return;
+  }
+  state.batches.slice(0, 6).forEach((job) => {
+    const row = document.createElement("div");
+    row.className = "batch-job-row";
+    const status = document.createElement("span");
+    status.className = `batch-job-status ${job.status}`;
+    status.textContent = job.status;
+    const label = document.createElement("span");
+    label.textContent = `#${job.id} · ${job.title} · ${job.completed_items}/${job.total_items}`;
+    row.append(label, status);
+    if (job.conversation_id) {
+      row.addEventListener("click", () => {
+        openConversation(job.conversation_id);
+        closeBatch();
+      });
+      row.style.cursor = "pointer";
+      row.title = "Open the resulting conversation";
+    }
+    els.batchJobs.appendChild(row);
+  });
+}
+
+els.batchSubmit.addEventListener("click", async () => {
+  const jsonl = els.batchJsonl.value.trim();
+  if (!jsonl) return;
+  els.batchSubmit.disabled = true;
+  els.batchStatus.className = "import-status";
+  els.batchStatus.classList.remove("ok", "err");
+  els.batchStatus.textContent = "Submitting…";
+
+  try {
+    const body = { jsonl };
+    const model = els.batchModel.value.trim();
+    if (model) body.model = model;
+    const system = els.batchSystem.value.trim();
+    if (system) body.system = system;
+    const job = await api("/api/batches", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    els.batchStatus.classList.add("ok");
+    els.batchStatus.textContent =
+      `Batch #${job.id} submitted (${job.total_items} requests, status: ${job.status}). ` +
+      `Answers will appear as a new conversation.`;
+    els.batchJsonl.value = "";
+    loadBatches();
+  } catch (err) {
+    els.batchStatus.classList.add("err");
+    els.batchStatus.textContent = `Submit failed: ${err.message}`;
+  } finally {
+    els.batchSubmit.disabled = false;
   }
 });

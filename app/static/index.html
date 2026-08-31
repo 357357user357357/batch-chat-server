@@ -29,6 +29,7 @@
       <div class="sidebar-footer">
         <span id="server-status" class="status-dot" title="Server status"></span>
         <span class="footer-actions">
+          <button id="batch-btn" class="btn btn-ghost btn-small" title="Run a JSONL batch (like GCP/AWS)">⚡ Batch</button>
           <button id="import-btn" class="btn btn-ghost btn-small" title="Import from the Android app">⬆ Import</button>
           <button id="logout-btn" class="btn btn-ghost btn-small">Log out</button>
         </span>
@@ -79,6 +80,37 @@
       <div class="modal-actions">
         <button id="import-submit" class="btn btn-primary">Import</button>
       </div>
+    </div>
+  </div>
+
+  <!-- Batch (JSONL) modal -->
+  <div id="batch-modal" class="modal-overlay hidden">
+    <div class="modal">
+      <div class="modal-header">
+        <h3>⚡ JSONL batch (OpenRouter async)</h3>
+        <button id="batch-close" class="btn btn-ghost btn-small">✕</button>
+      </div>
+      <p class="modal-hint">
+        Paste a <code>.jsonl</code> file — works with OpenRouter/OpenAI,
+        Google Vertex&nbsp;AI (<code>{"request":{"contents":[...]}}</code>),
+        and AWS Bedrock (<code>{"recordId":"…","modelInput":{…}}</code>) line
+        formats. Each line is sent to the batch model; answers land in a new
+        conversation.
+      </p>
+      <label class="modal-field">
+        Model
+        <input id="batch-model" type="text" value="anthropic/claude-fable-5:batch" />
+      </label>
+      <label class="modal-field">
+        System prompt (optional, added to every line)
+        <input id="batch-system" type="text" placeholder="You are a helpful assistant." />
+      </label>
+      <textarea id="batch-jsonl" rows="10" spellcheck="false" placeholder='{"request": {"contents": [{"role": "user", "parts": [{"text": "Write a haiku"}]}]}}'></textarea>
+      <p id="batch-status" class="import-status"></p>
+      <div class="modal-actions">
+        <button id="batch-submit" class="btn btn-primary">Submit batch</button>
+      </div>
+      <div id="batch-jobs" class="batch-jobs"></div>
     </div>
   </div>
 

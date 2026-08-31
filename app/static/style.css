@@ -308,3 +308,28 @@ input:focus, textarea:focus { outline: 2px solid var(--accent); outline-offset: 
 .import-status.err { color: var(--error); }
 
 .modal-actions { display: flex; justify-content: flex-end; gap: 8px; }
+
+.modal-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.modal-field input { margin-top: 2px; }
+
+.batch-jobs { margin-top: 8px; display: flex; flex-direction: column; gap: 6px; }
+.batch-job-row {
+  font-size: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 6px 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.batch-job-status { font-weight: 700; text-transform: uppercase; }
+.batch-job-status.completed { color: var(--success); }
+.batch-job-status.error, .batch-job-status.failed { color: var(--error); }
+.batch-job-status.pending { color: var(--accent-hover); }

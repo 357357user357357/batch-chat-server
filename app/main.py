@@ -6,7 +6,8 @@ from fastapi.staticfiles import StaticFiles
 from sqlalchemy import inspect, text
 
 from app.database import Base, engine
-from app.routers import auth, chat, conversations, import_conversations
+from app.routers import auth, batches, chat, conversations, import_conversations
+from app.services.batch_worker import start_batch_worker
 
 
 def _run_migrations() -> None:
@@ -45,6 +46,9 @@ app.include_router(auth.router)
 app.include_router(conversations.router)
 app.include_router(chat.router)
 app.include_router(import_conversations.router)
+app.include_router(batches.router)
+
+start_batch_worker()
 
 # Serve the static web UI (Plain HTML/JS, no build step required)
 ui_dir = Path(__file__).parent / "static"

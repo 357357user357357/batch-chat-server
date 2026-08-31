@@ -174,3 +174,57 @@ class PhoneImportRequest(BaseModel):
 class HealthResponse(BaseModel):
     status: str
     openrouter_configured: bool
+
+
+# ---------------------------------------------------------------
+# JSONL batch jobs (OpenRouter async Batch API)
+# ---------------------------------------------------------------
+
+
+class BatchSubmitRequest(BaseModel):
+    """Submit a JSONL batch. `jsonl` is the raw file content (multiple lines).
+
+    Accepted line schemas (like GCP Vertex AI / AWS Bedrock but driven by
+    OpenRouter's async Batch API on the server):
+      - OpenRouter/OpenAI : {"custom_id": "...", "body": {"messages": [...]}}
+      - Shorthand         : {"custom_id": "...", "messages": [...]}
+      - Simple prompt     : {"custom_id": "...", "prompt": "text"}
+      - Vertex AI (Gemini): {"request": {"contents": [{"role": "user",
+                            "parts": [{"text": "..."}]}]}}
+      - Bedrock (Anthr.)  : {"recordId": "...", "modelInput": {"messages": [...]}}
+    """
+
+    model: str = "anthropic/claude-fable-5:batch"
+    jsonl: str = Field(min_length=1)
+    title: str | None = None
+    system: str | None = None
+    temperature: float | None = None
+    max_tokens: int | None = None
+
+
+class BatchItemOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    custom_id: str
+    prompt: str
+    status: str
+    answer: str | None = None
+    error: str | None = None
+
+
+class BatchJobOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    external_id: str | None = None
+    model: str
+    title: str
+    status: str
+    error: str | None = None
+    total_items: int
+    completed_items: int
+    failed_items: int
+    created_at: datetime | None = None
+    finalized_at: datetime | None = None
+    conversation_id: int | None = None
+    items: list[BatchItemOut] = []
