@@ -36,7 +36,7 @@ def send_chat(
             raise HTTPException(status_code=404, detail="Conversation not found")
     else:
         title = (payload.user_message[:50] + "…") if len(payload.user_message) > 50 else payload.user_message
-        conv = Conversation(title=title[:255] or "New chat")
+        conv = Conversation(title=title[:255] or "New chat", kind="chat")
         db.add(conv)
         db.commit()
         db.refresh(conv)

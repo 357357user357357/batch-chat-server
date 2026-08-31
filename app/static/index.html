@@ -28,7 +28,10 @@
       <ul id="conversation-list" class="conversation-list"></ul>
       <div class="sidebar-footer">
         <span id="server-status" class="status-dot" title="Server status"></span>
-        <button id="logout-btn" class="btn btn-ghost btn-small">Log out</button>
+        <span class="footer-actions">
+          <button id="import-btn" class="btn btn-ghost btn-small" title="Import from the Android app">⬆ Import</button>
+          <button id="logout-btn" class="btn btn-ghost btn-small">Log out</button>
+        </span>
       </div>
     </aside>
 
@@ -57,6 +60,27 @@
       </form>
     </main>
   </section>
+
+  <!-- Import modal -->
+  <div id="import-modal" class="modal-overlay hidden">
+    <div class="modal">
+      <div class="modal-header">
+        <h3>Import from the Android app</h3>
+        <button id="import-close" class="btn btn-ghost btn-small">✕</button>
+      </div>
+      <p class="modal-hint">
+        Paste the JSON you exported from the phone app
+        (<code>openrouter.dialogs.v1</code> and/or
+        <code>openrouter.batches.history.v1</code>). Either paste each list
+        separately, or a whole object containing those keys — both work.
+      </p>
+      <textarea id="import-textarea" rows="10" placeholder='{"openrouter.dialogs.v1": [...], "openrouter.batches.history.v1": [...]}'></textarea>
+      <p id="import-status" class="import-status"></p>
+      <div class="modal-actions">
+        <button id="import-submit" class="btn btn-primary">Import</button>
+      </div>
+    </div>
+  </div>
 
   <script src="app.js"></script>
 </body>

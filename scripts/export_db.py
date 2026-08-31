@@ -17,7 +17,9 @@ def export(db_path: str, output: str) -> None:
     cur = conn.cursor()
 
     conversations = []
-    for conv in cur.execute("SELECT id, title FROM conversations").fetchall():
+    for conv in cur.execute(
+        "SELECT id, external_id, kind, model, title FROM conversations"
+    ).fetchall():
         messages = []
         for msg in cur.execute(
             "SELECT role, content, model FROM messages WHERE conversation_id = ? ORDER BY id",
@@ -30,7 +32,16 @@ def export(db_path: str, output: str) -> None:
                     **({"model": msg["model"]} if msg["model"] else {}),
                 }
             )
-        conversations.append({"title": conv["title"], "messages": messages})
+        item = {
+            "title": conv["title"],
+            "kind": conv["kind"] or "chat",
+            "messages": messages,
+        }
+        if conv["external_id"]:
+            item["external_id"] = conv["external_id"]
+        if conv["model"]:
+            item["model"] = conv["model"]
+        conversations.append(item)
 
     conn.close()
 

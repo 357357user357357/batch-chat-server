@@ -23,9 +23,15 @@ class Conversation(Base):
     __tablename__ = "conversations"
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    # id used by the Android app (AsyncStorage "openrouter.dialogs.v1" / batches v1)
+    external_id: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
+    # "chat" (regular dialog) or "batch" (OpenRouter async batch run)
+    kind: Mapped[str] = mapped_column(String(16), default="chat")
+    # model used for the whole conversation (app stores one model per dialog)
+    model: Mapped[str | None] = mapped_column(String(255), nullable=True)
     title: Mapped[str] = mapped_column(String(255), default="New chat")
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
+    created_at: Mapped[datetime | None] = mapped_column(DateTime, default=utcnow)
+    updated_at: Mapped[datetime | None] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
 
     messages: Mapped[list["Message"]] = relationship(
         back_populates="conversation",
@@ -44,6 +50,6 @@ class Message(Base):
     # model used for assistant messages (for user messages usually NULL)
     model: Mapped[str | None] = mapped_column(String(255), nullable=True)
     content: Mapped[str] = mapped_column(Text)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    created_at: Mapped[datetime | None] = mapped_column(DateTime, default=utcnow)
 
     conversation: Mapped["Conversation"] = relationship(back_populates="messages")

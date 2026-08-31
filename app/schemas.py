@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
 
 class MessageOut(BaseModel):
@@ -10,16 +10,18 @@ class MessageOut(BaseModel):
     role: str
     model: str | None = None
     content: str
-    created_at: datetime
+    created_at: datetime | None = None
 
 
 class ConversationSummary(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
+    kind: str = "chat"
+    model: str | None = None
     title: str
-    created_at: datetime
-    updated_at: datetime
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
     message_count: int = 0
     last_message: str | None = None
 
@@ -28,9 +30,12 @@ class ConversationDetail(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
+    external_id: str | None = None
+    kind: str = "chat"
+    model: str | None = None
     title: str
-    created_at: datetime
-    updated_at: datetime
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
     messages: list[MessageOut]
 
 
@@ -89,6 +94,9 @@ class ImportMessage(BaseModel):
 
 
 class ImportConversation(BaseModel):
+    external_id: str | None = None
+    kind: str = Field(default="chat", pattern="^(chat|batch)$")
+    model: str | None = None
     title: str | None = None
     messages: list[ImportMessage] = []
 
@@ -100,6 +108,67 @@ class ImportRequest(BaseModel):
 class ImportResponse(BaseModel):
     conversations_created: int
     messages_created: int
+
+
+# ---------------------------------------------------------------
+# Native Android-app formats (AsyncStorage JSON)
+#   openrouter.dialogs.v1         → list[PhoneDialog]
+#   openrouter.batches.history.v1 → list[PhoneBatch]
+# ---------------------------------------------------------------
+
+
+class PhoneDialog(BaseModel):
+    """One entry of openrouter.dialogs.v1 from the app."""
+
+    id: str | None = None
+    title: str | None = None
+    model: str | None = None
+    messages: list[ImportMessage] = []
+    createdAt: int | None = None
+    updatedAt: int | None = None
+
+
+class PhoneBatchResult(BaseModel):
+    """One result inside a batch (custom_id keys a prompt, e.g. req-1)."""
+
+    custom_id: str | None = None
+    ok: bool = True
+    answer: str | None = None
+    error: str | None = None
+    status: int | None = None
+
+
+class PhoneBatch(BaseModel):
+    """One entry of openrouter.batches.history.v1 from the app."""
+
+    id: str | None = None
+    title: str | None = None
+    model: str | None = None
+    prompts: list[str] = []
+    createdAt: int | None = None
+    # Raw OpenRouter batch object stored inside the item (id/status/results).
+    # We only use its "results" list; everything else is ignored.
+    batch: dict | None = None
+
+
+class PhoneImportRequest(BaseModel):
+    """Payload of the "import from the Android app" endpoint.
+
+    Accepts lists of dialogs and/or batch-history items. The canonical phone
+    storage keys (openrouter.dialogs.v1, openrouter.batches.history.v1) are
+    accepted as aliases, so you can paste a whole AsyncStorage dump directly.
+    """
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    dialogs: list[PhoneDialog] | None = Field(
+        default=None,
+        validation_alias=AliasChoices("dialogs", "openrouter.dialogs.v1"),
+    )
+    batches: list[PhoneBatch] | None = Field(
+        default=None,
+        validation_alias=AliasChoices("batches", "openrouter.batches.history.v1"),
+    )
 
 
 class HealthResponse(BaseModel):

@@ -35,6 +35,12 @@ const els = {
   modelCheckboxes: $("#model-checkboxes"),
   customModelInput: $("#custom-model-input"),
   addModelBtn: $("#add-model-btn"),
+  importBtn: $("#import-btn"),
+  importModal: $("#import-modal"),
+  importClose: $("#import-close"),
+  importTextarea: $("#import-textarea"),
+  importStatus: $("#import-status"),
+  importSubmit: $("#import-submit"),
 };
 
 // ---------------------------------------------------------------
@@ -209,7 +215,23 @@ function renderConversationList() {
     preview.className = "conversation-item-preview";
     preview.textContent = conv.last_message || `${conv.message_count} messages`;
 
-    li.append(title, preview);
+    const badges = document.createElement("div");
+    badges.className = "conversation-badges";
+    if (conv.kind === "batch") {
+      const b = document.createElement("span");
+      b.className = "badge batch";
+      b.textContent = "batch";
+      badges.appendChild(b);
+    }
+    if (conv.model) {
+      const m = document.createElement("span");
+      m.className = "badge model";
+      m.textContent = conv.model;
+      m.title = conv.model;
+      badges.appendChild(m);
+    }
+
+    li.append(title, preview, badges);
     li.addEventListener("click", () => openConversation(conv.id));
     els.conversationList.appendChild(li);
   });
@@ -339,5 +361,88 @@ els.chatInput.addEventListener("keydown", (e) => {
   if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
     e.preventDefault();
     els.chatForm.requestSubmit();
+  }
+});
+
+// ---------------------------------------------------------------
+// Import from the Android app
+// ---------------------------------------------------------------
+function openImport() {
+  els.importStatus.className = "import-status";
+  els.importStatus.textContent = "";
+  els.importTextarea.value = "";
+  els.importModal.classList.remove("hidden");
+}
+
+function closeImport() {
+  els.importModal.classList.add("hidden");
+}
+
+els.importBtn.addEventListener("click", openImport);
+els.importClose.addEventListener("click", closeImport);
+els.importModal.addEventListener("click", (e) => {
+  if (e.target === els.importModal) closeImport();
+});
+
+/**
+ * Normalize a paste so the server always receives {dialogs, batches}.
+ * Accepts a raw AsyncStorage dump (openrouter.dialogs.v1 / .batches.history.v1),
+ * the shorthand arrays, or {dialogs, batches} directly.
+ */
+function normalizePhonePayload(raw) {
+  if (raw === null || typeof raw !== "object") {
+    throw new Error("Pasted JSON must be an object or array.");
+  }
+
+  // Whole AsyncStorage dump: {...key: value}
+  if (!Array.isArray(raw)) {
+    const dialogs = raw["openrouter.dialogs.v1"];
+    const batches = raw["openrouter.batches.history.v1"];
+    if (Array.isArray(dialogs) || Array.isArray(batches)) {
+      return { dialogs: dialogs || [], batches: batches || [] };
+    }
+    // Already normalized {dialogs, batches}
+    if (raw.dialogs || raw.batches) {
+      return { dialogs: raw.dialogs || [], batches: raw.batches || [] };
+    }
+    throw new Error(
+      "Could not find openrouter.dialogs.v1 or openrouter.batches.history.v1 in the JSON."
+    );
+  }
+
+  // Bare list of dialogs
+  const looksLikeDialog = (item) =>
+    item && typeof item === "object" && Array.isArray(item.messages);
+  if (raw.length === 0 || looksLikeDialog(raw[0])) {
+    return { dialogs: raw, batches: [] };
+  }
+  throw new Error("Unrecognized array format. Paste a dialogs or batches export.");
+}
+
+els.importSubmit.addEventListener("click", async () => {
+  const rawText = els.importTextarea.value.trim();
+  if (!rawText) return;
+  els.importSubmit.disabled = true;
+  els.importStatus.className = "import-status";
+  els.importStatus.textContent = "Importing…";
+
+  try {
+    const parsed = JSON.parse(rawText);
+    const payload = normalizePhonePayload(parsed);
+    const result = await api("/api/import/phone", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    els.importStatus.classList.add("ok");
+    els.importStatus.textContent =
+      `Imported ${result.conversations_created} conversations, ` +
+      `${result.messages_created} messages.`;
+    await loadConversations();
+  } catch (err) {
+    els.importStatus.classList.add("err");
+    els.importStatus.textContent = `Import failed: ${err.message}`;
+  } finally {
+    els.importSubmit.disabled = false;
   }
 });

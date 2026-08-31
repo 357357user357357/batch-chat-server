@@ -7,14 +7,15 @@ REQUEST_TIMEOUT = httpx.Timeout(180.0, connect=15.0)
 # A sane default list of models for the "batch" feature.
 # Users can send requests to several models at once and compare answers.
 DEFAULT_MODELS = [
-    "openrouter/auto",
+    "deepseek/deepseek-v4-flash-0731",
     "deepseek/deepseek-chat",
-    "anthropic/claude-sonnet-4.5",
-    "anthropic/claude-haiku-4.5",
     "openai/gpt-4o-mini",
     "openai/gpt-4.1",
+    "anthropic/claude-haiku-4.5",
+    "anthropic/claude-sonnet-4.5",
     "google/gemini-2.5-flash",
     "meta-llama/llama-3.3-70b-instruct",
+    "openrouter/auto",
 ]
 
 

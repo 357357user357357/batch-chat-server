@@ -3,15 +3,33 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from sqlalchemy import inspect, text
 
 from app.database import Base, engine
 from app.routers import auth, chat, conversations, import_conversations
 
+
+def _run_migrations() -> None:
+    """Lightweight SQLite migration for columns added after first release."""
+    inspector = inspect(engine)
+    if not inspector.has_table("conversations"):
+        return
+    existing = {col["name"] for col in inspector.get_columns("conversations")}
+    with engine.begin() as conn:
+        if "external_id" not in existing:
+            conn.execute(text("ALTER TABLE conversations ADD COLUMN external_id VARCHAR(255)"))
+        if "kind" not in existing:
+            conn.execute(text("ALTER TABLE conversations ADD COLUMN kind VARCHAR(16) DEFAULT 'chat'"))
+        if "model" not in existing:
+            conn.execute(text("ALTER TABLE conversations ADD COLUMN model VARCHAR(255)"))
+
+
 Base.metadata.create_all(bind=engine)
+_run_migrations()
 
 app = FastAPI(
     title="Batch Chat Server",
-    version="1.0.0",
+    version="1.1.0",
     docs_url="/api/docs",
     openapi_url="/api/openapi.json",
 )

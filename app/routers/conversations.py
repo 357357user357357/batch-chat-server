@@ -35,6 +35,8 @@ def list_conversations(db: Session = Depends(get_db), _: AuthToken = Depends(get
         result.append(
             ConversationSummary(
                 id=conv.id,
+                kind=conv.kind,
+                model=conv.model,
                 title=conv.title,
                 created_at=conv.created_at,
                 updated_at=conv.updated_at,
