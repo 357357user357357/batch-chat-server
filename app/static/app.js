@@ -122,6 +122,11 @@ function showApp() {
   checkHealth();
 }
 
+function showLogin() {
+  els.appView.classList.add("hidden");
+  els.loginView.classList.remove("hidden");
+}
+
 async function checkHealth() {
   try {
     const data = await api("/api/health");
@@ -139,7 +144,9 @@ async function checkHealth() {
 if (state.token) {
   api("/api/auth/me")
     .then(() => showApp())
-    .catch(() => { /* login screen stays */ });
+    .catch(() => showLogin());
+} else {
+  showLogin();
 }
 
 // ---------------------------------------------------------------
