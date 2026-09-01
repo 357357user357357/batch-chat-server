@@ -1,7 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from app.config import settings
 from app.database import get_db
 from app.models import AuthToken
 from app.schemas import (
@@ -10,16 +9,14 @@ from app.schemas import (
     LoginResponse,
 )
 from app.security import create_token, get_current_token, verify_password
+from app.services.providers import configured_status
 
 router = APIRouter(prefix="/api", tags=["auth"])
 
 
 @router.get("/health", response_model=HealthResponse)
 def health() -> HealthResponse:
-    return HealthResponse(
-        status="ok",
-        openrouter_configured=bool(settings.openrouter_api_key),
-    )
+    return HealthResponse(status="ok", **configured_status())
 
 
 @router.post("/auth/login", response_model=LoginResponse)

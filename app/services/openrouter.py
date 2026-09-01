@@ -3,6 +3,7 @@ import time
 import httpx
 
 from app.config import settings
+from app.services.provider_errors import ProviderError
 
 REQUEST_TIMEOUT = httpx.Timeout(180.0, connect=15.0)
 
@@ -30,7 +31,7 @@ DEFAULT_MODELS = [
 DEFAULT_BATCH_MODEL = "anthropic/claude-fable-5:batch"
 
 
-class OpenRouterError(Exception):
+class OpenRouterError(ProviderError):
     pass
 
 

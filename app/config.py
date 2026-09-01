@@ -17,6 +17,20 @@ class Settings(BaseSettings):
     # Where the web UI is served from inside the container
     ui_dir: str = "app/static"
 
+    # Google Vertex AI (direct calls, models prefixed "vertex:" in the UI)
+    google_project_id: str = ""
+    google_location: str = "us-central1"
+    # Paste the whole service-account JSON key content here (single line/escaped)
+    google_service_account_json: str = ""
+    # ...or point to a mounted key file instead of pasting the JSON
+    google_service_account_file: str = ""
+
+    # AWS Bedrock (direct calls, models prefixed "bedrock:" in the UI)
+    aws_access_key_id: str = ""
+    aws_secret_access_key: str = ""
+    aws_session_token: str = ""
+    aws_region: str = "us-east-1"
+
 
 @lru_cache
 def get_settings() -> Settings:

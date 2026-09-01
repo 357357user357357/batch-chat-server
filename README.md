@@ -15,16 +15,38 @@ You asked which tools to use — here is the reasoning behind what's in this rep
 | Database | **SQLite (SQLAlchemy)** | Perfect for the cheapest VPS: zero configuration, one file, no separate DB process eating RAM. SQLAlchemy lets you switch to PostgreSQL later with minimal changes. |
 | Deployment | **Docker + docker-compose** | One command to deploy on any rented machine; reproducible, no dependency drift. |
 | Web UI | **Plain JavaScript (no framework, no build step)** | You said React is unfamiliar. This UI is a single HTML/CSS/JS page — no Node.js, no npm, nothing to compile. Easy to read and modify. |
-| LLM API | **OpenRouter** | Already the API your Android app uses. The server keeps the API key in its `.env` (never in the browser). |
+| LLM API | **OpenRouter** (+ direct Google Vertex AI / AWS Bedrock) | Already the API your Android app uses. The server keeps the API key in its `.env` (never in the browser). Vertex AI and Bedrock can be called directly too, once you add their credentials. |
 
 ## Features
 
 - 🔐 Password-protected web UI (single-user login, session tokens)
 - 💬 Conversations stored in **SQLite on the server** → survive app reinstalls, readable from PC/phone/anything with a browser
-- 🤖 **Batch send** — one message to many OpenRouter models in parallel, answers stored separately per model
+- 🤖 **Batch send** — one message to many models in parallel (OpenRouter, and optionally Vertex AI / Bedrock), answers stored separately per model
 - 📦 **JSONL batch jobs** — run async batches exactly like GCP Vertex AI / AWS Bedrock: paste a `.jsonl` (OpenAI/OpenRouter, Vertex, or Bedrock line formats), get answers in a conversation
 - 📥 **Import API** so you can migrate your existing Android dialogues into the server
 - ⚙️ Pure vanilla JS UI, works on mobile and desktop
+
+## Multiple providers (OpenRouter / Vertex AI / Bedrock)
+
+By default every model is called through **OpenRouter**. You can also call
+**Google Vertex AI** or **AWS Bedrock** directly (no OpenRouter markup, uses
+your own cloud billing) by prefixing the model name in the "Models" picker
+(the custom-model box already supports free text):
+
+| Prefix | Example | Needs |
+|---|---|---|
+| *(none)* | `anthropic/claude-sonnet-4.5` | `OPENROUTER_API_KEY` |
+| `vertex:` | `vertex:gemini-2.5-flash`, `vertex:claude-sonnet-4-5@20250929` | `GOOGLE_PROJECT_ID` + service-account key |
+| `bedrock:` | `bedrock:anthropic.claude-3-5-sonnet-20241022-v2:0` | `AWS_ACCESS_KEY_ID` + `AWS_SECRET_ACCESS_KEY` |
+
+See `.env.example` for exact steps to obtain each credential. `GET /api/health`
+reports which providers are currently configured (`vertex_configured`,
+`bedrock_configured`). Note: the async **`/api/batches` JSONL endpoint still
+submits through OpenRouter's Batch API** — real Vertex/Bedrock batch jobs need
+a GCS/S3 bucket, which is out of scope for a single cheap VPS; the `vertex:`
+and `bedrock:` prefixes work with `/api/chat/send` (regular + multi-model
+compare) today.
+
 
 ## Quick start (on any rented VPS)
 

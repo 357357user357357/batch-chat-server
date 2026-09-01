@@ -13,14 +13,14 @@ from app.schemas import (
     MessageOut,
 )
 from app.security import get_current_token
-from app.services.openrouter import DEFAULT_MODELS, OpenRouterError, chat_completion
+from app.services.providers import ProviderError, chat_completion, default_models
 
 router = APIRouter(prefix="/api/chat", tags=["chat"])
 
 
 @router.get("/models")
 def available_models() -> dict:
-    return {"default_models": DEFAULT_MODELS}
+    return {"default_models": default_models()}
 
 
 @router.post("/send", response_model=ChatResponse)
@@ -79,7 +79,7 @@ def send_chat(
                 max_tokens=payload.max_tokens,
             )
             return ChatResponseItem(model=model, ok=True, content=content)
-        except OpenRouterError as exc:
+        except ProviderError as exc:
             return ChatResponseItem(model=model, ok=False, error=str(exc))
         except Exception as exc:  # defensive: never crash the whole batch
             return ChatResponseItem(model=model, ok=False, error=f"Unexpected error: {exc}")

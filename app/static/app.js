@@ -132,9 +132,14 @@ async function checkHealth() {
     const data = await api("/api/health");
     els.serverStatus.classList.add("ok");
     els.serverStatus.classList.remove("down");
-    els.serverStatus.title = data.openrouter_configured
-      ? "Server OK · OpenRouter configured"
-      : "Server OK · OpenRouter key NOT set — calls will fail";
+    const configured = [
+      data.openrouter_configured && "OpenRouter",
+      data.vertex_configured && "Vertex AI",
+      data.bedrock_configured && "Bedrock",
+    ].filter(Boolean);
+    els.serverStatus.title = configured.length
+      ? `Server OK · configured: ${configured.join(", ")}`
+      : "Server OK · no provider keys set — calls will fail";
   } catch {
     els.serverStatus.classList.remove("ok");
     els.serverStatus.classList.add("down");

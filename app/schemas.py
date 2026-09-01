@@ -174,6 +174,8 @@ class PhoneImportRequest(BaseModel):
 class HealthResponse(BaseModel):
     status: str
     openrouter_configured: bool
+    vertex_configured: bool = False
+    bedrock_configured: bool = False
 
 
 # ---------------------------------------------------------------
