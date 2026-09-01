@@ -67,3 +67,16 @@ def current_view() -> dict:
     for field in PLAIN_FIELDS:
         view[field] = {"configured": bool(getattr(settings, field, "")), "value": getattr(settings, field, "")}
     return view
+
+
+def export_backup() -> dict:
+    """Raw (unmasked) snapshot of every saved credential, for the "download a
+    backup file before shutting down the old server" migration flow."""
+    return {field: getattr(settings, field, "") or "" for field in ALLOWED_FIELDS}
+
+
+def import_backup(db: Session, data: dict) -> None:
+    """Restore credentials from a file produced by `export_backup`. Unknown
+    keys are ignored, missing keys are left untouched (partial backups ok)."""
+    updates = {k: v for k, v in data.items() if k in ALLOWED_FIELDS and isinstance(v, str)}
+    save_overrides(db, updates)

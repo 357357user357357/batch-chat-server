@@ -32,7 +32,7 @@ def send_chat(
     # 1. Find or create the conversation
     if payload.conversation_id is not None:
         conv = db.get(Conversation, payload.conversation_id)
-        if conv is None:
+        if conv is None or conv.deleted_at is not None:
             raise HTTPException(status_code=404, detail="Conversation not found")
     else:
         title = (payload.user_message[:50] + "…") if len(payload.user_message) > 50 else payload.user_message

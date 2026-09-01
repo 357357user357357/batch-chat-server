@@ -169,6 +169,19 @@
       <div class="modal-actions">
         <button id="settings-submit" class="btn btn-primary">Save</button>
       </div>
+
+      <hr class="modal-divider" />
+      <p class="modal-hint">
+        <strong>Server migration.</strong> Download every key above as one
+        file before shutting down this server, then restore it on the new
+        one — no need to retype anything.
+      </p>
+      <p id="settings-backup-status" class="import-status"></p>
+      <div class="modal-actions">
+        <button id="settings-backup-download" class="btn btn-ghost btn-small">⬇ Download backup</button>
+        <button id="settings-backup-restore-btn" class="btn btn-ghost btn-small">⬆ Restore backup</button>
+        <input id="settings-backup-file" type="file" accept="application/json" class="hidden" />
+      </div>
     </div>
   </div>
 

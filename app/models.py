@@ -44,6 +44,9 @@ class Conversation(Base):
     title: Mapped[str] = mapped_column(String(255), default="New chat")
     created_at: Mapped[datetime | None] = mapped_column(DateTime, default=utcnow)
     updated_at: Mapped[datetime | None] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
+    # Soft-delete tombstone: kept (instead of a hard delete) so other devices
+    # can be told "this dialog was deleted" the next time they sync.
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
 
     messages: Mapped[list["Message"]] = relationship(
         back_populates="conversation",

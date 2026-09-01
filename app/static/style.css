@@ -130,11 +130,34 @@ input:focus, textarea:focus { outline: 2px solid var(--accent); outline-offset: 
   border-radius: 8px;
   cursor: pointer;
   margin-bottom: 2px;
+  position: relative;
 }
 .conversation-item:hover { background: var(--bg-elevated); }
 .conversation-item.active { background: var(--bg-elevated); outline: 1px solid var(--accent); }
-.conversation-item-title { font-weight: 600; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.conversation-item-title { font-weight: 600; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding-right: 46px; }
 .conversation-item-preview { font-size: 12px; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 2px; }
+
+.conversation-item-actions {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: flex;
+  gap: 2px;
+  opacity: 0;
+  transition: opacity .1s;
+}
+.conversation-item:hover .conversation-item-actions { opacity: 1; }
+.conversation-action {
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 13px;
+  padding: 2px 5px;
+  border-radius: 4px;
+  line-height: 1;
+}
+.conversation-action:hover { background: var(--bg-secondary); color: var(--text); }
 
 .conversation-badges { display: flex; gap: 4px; margin-top: 4px; flex-wrap: wrap; }
 .badge {
@@ -343,6 +366,8 @@ input:focus, textarea:focus { outline: 2px solid var(--accent); outline-offset: 
 .import-status.err { color: var(--error); }
 
 .modal-actions { display: flex; justify-content: flex-end; gap: 8px; }
+
+.modal-divider { border: none; border-top: 1px solid var(--border); margin: 16px 0 12px; }
 
 .modal-field {
   display: flex;

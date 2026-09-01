@@ -196,6 +196,21 @@ class SettingsUpdate(BaseModel):
     aws_region: str | None = None
 
 
+class SettingsBackup(BaseModel):
+    """Raw (unmasked) credential export/import file — download before
+    decommissioning a server, upload on the new one to restore in one step."""
+
+    model_config = ConfigDict(extra="allow")
+
+    openrouter_api_key: str = ""
+    google_project_id: str = ""
+    google_location: str = ""
+    google_service_account_json: str = ""
+    aws_access_key_id: str = ""
+    aws_secret_access_key: str = ""
+    aws_session_token: str = ""
+    aws_region: str = ""
+
 
 # ---------------------------------------------------------------
 # JSONL batch jobs (OpenRouter async Batch API)
@@ -249,3 +264,56 @@ class BatchJobOut(BaseModel):
     finalized_at: datetime | None = None
     conversation_id: int | None = None
     items: list[BatchItemOut] = []
+
+
+# ---------------------------------------------------------------
+# Multi-device sync (Android app + PCs sharing one server account)
+#
+# Devices authenticate the same way as the web UI (POST /api/auth/login with
+# the shared password → bearer token); that token doubles as the "sync key".
+# Sync is keyed by `external_id` (the id a dialog/batch was first created
+# with, wherever that was) so the same dialog is recognized everywhere.
+# ---------------------------------------------------------------
+
+
+class SyncMessage(BaseModel):
+    role: str = Field(pattern="^(user|assistant|system)$")
+    content: str
+    model: str | None = None
+
+
+class SyncConversationOut(BaseModel):
+    """One dialog as returned by a sync pull. `deleted` tombstones removals so
+    other devices can drop their local copy instead of keeping a stale one."""
+
+    external_id: str
+    kind: str = "chat"
+    model: str | None = None
+    title: str
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+    deleted: bool = False
+    messages: list[SyncMessage] = []
+
+
+class SyncPullResponse(BaseModel):
+    # Echoed back so the client can pass it as `since` on the next pull
+    # without depending on its own (possibly skewed) clock.
+    server_time: datetime
+    conversations: list[SyncConversationOut]
+
+
+class SyncPushRequest(BaseModel):
+    """Dialogs/batches created or changed locally since the last sync, plus
+    the external_ids of any deleted locally (soft-deleted on the server)."""
+
+    dialogs: list[PhoneDialog] = []
+    batches: list[PhoneBatch] = []
+    deleted_external_ids: list[str] = []
+
+
+class SyncPushResponse(BaseModel):
+    created: int
+    updated: int
+    deleted: int
+    server_time: datetime

@@ -68,6 +68,10 @@ const els = {
   settingsAwsRegion: $("#settings-aws-region"),
   settingsStatus: $("#settings-status"),
   settingsSubmit: $("#settings-submit"),
+  settingsBackupStatus: $("#settings-backup-status"),
+  settingsBackupDownload: $("#settings-backup-download"),
+  settingsBackupRestoreBtn: $("#settings-backup-restore-btn"),
+  settingsBackupFile: $("#settings-backup-file"),
 };
 
 // ---------------------------------------------------------------
@@ -270,10 +274,69 @@ function renderConversationList() {
       badges.appendChild(m);
     }
 
-    li.append(title, preview, badges);
+    const actions = document.createElement("div");
+    actions.className = "conversation-item-actions";
+
+    const renameBtn = document.createElement("button");
+    renameBtn.type = "button";
+    renameBtn.className = "conversation-action";
+    renameBtn.title = "Rename";
+    renameBtn.textContent = "✎";
+    renameBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      renameConversation(conv);
+    });
+
+    const deleteBtn = document.createElement("button");
+    deleteBtn.type = "button";
+    deleteBtn.className = "conversation-action";
+    deleteBtn.title = "Delete";
+    deleteBtn.textContent = "🗑";
+    deleteBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      deleteConversation(conv);
+    });
+
+    actions.append(renameBtn, deleteBtn);
+
+    li.append(title, preview, badges, actions);
     li.addEventListener("click", () => openConversation(conv.id));
     els.conversationList.appendChild(li);
   });
+}
+
+async function renameConversation(conv) {
+  const next = prompt("Rename dialog:", conv.title || "");
+  if (next === null) return;
+  const title = next.trim();
+  if (!title || title === conv.title) return;
+  try {
+    await api(`/api/conversations/${conv.id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ title }),
+    });
+    conv.title = title;
+    if (conv.id === state.currentConversationId) els.chatTitle.textContent = title;
+    renderConversationList();
+  } catch (err) {
+    alert(`Rename failed: ${err.message}`);
+  }
+}
+
+async function deleteConversation(conv) {
+  if (!confirm(`Delete "${conv.title || "Untitled"}"? This cannot be undone.`)) return;
+  try {
+    await api(`/api/conversations/${conv.id}`, { method: "DELETE" });
+    state.conversations = state.conversations.filter((c) => c.id !== conv.id);
+    if (conv.id === state.currentConversationId) {
+      state.currentConversationId = null;
+      els.chatTitle.textContent = "Select or start a chat";
+      els.messages.innerHTML = "";
+    }
+    renderConversationList();
+  } catch (err) {
+    alert(`Delete failed: ${err.message}`);
+  }
 }
 
 async function openConversation(id) {
@@ -752,5 +815,56 @@ els.settingsSubmit.addEventListener("click", async () => {
     els.settingsStatus.textContent = `Save failed: ${err.message}`;
   } finally {
     els.settingsSubmit.disabled = false;
+  }
+});
+
+// ---------------------------------------------------------------
+// Settings backup (single-file server migration)
+// ---------------------------------------------------------------
+els.settingsBackupDownload.addEventListener("click", async () => {
+  els.settingsBackupStatus.className = "import-status";
+  els.settingsBackupStatus.textContent = "Preparing backup…";
+  try {
+    const data = await api("/api/settings/backup");
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `batch-chat-server-backup-${new Date().toISOString().slice(0, 10)}.json`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+    els.settingsBackupStatus.classList.add("ok");
+    els.settingsBackupStatus.textContent = "Backup downloaded. Keep this file private — it contains raw API keys.";
+  } catch (err) {
+    els.settingsBackupStatus.classList.add("err");
+    els.settingsBackupStatus.textContent = `Backup failed: ${err.message}`;
+  }
+});
+
+els.settingsBackupRestoreBtn.addEventListener("click", () => els.settingsBackupFile.click());
+
+els.settingsBackupFile.addEventListener("change", async () => {
+  const file = els.settingsBackupFile.files && els.settingsBackupFile.files[0];
+  els.settingsBackupFile.value = "";
+  if (!file) return;
+  els.settingsBackupStatus.className = "import-status";
+  els.settingsBackupStatus.textContent = "Restoring…";
+  try {
+    const text = await file.text();
+    const data = JSON.parse(text);
+    await api("/api/settings/backup", {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+    els.settingsBackupStatus.classList.add("ok");
+    els.settingsBackupStatus.textContent = "Backup restored. Applied immediately, no restart needed.";
+    await loadSettings();
+    await checkHealth();
+    await loadModels();
+  } catch (err) {
+    els.settingsBackupStatus.classList.add("err");
+    els.settingsBackupStatus.textContent = `Restore failed: ${err.message}`;
   }
 });

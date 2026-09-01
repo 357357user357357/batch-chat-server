@@ -6,7 +6,7 @@ from fastapi.staticfiles import StaticFiles
 from sqlalchemy import inspect, text
 
 from app.database import Base, SessionLocal, engine
-from app.routers import auth, batches, chat, conversations, import_conversations, settings as settings_router
+from app.routers import auth, batches, chat, conversations, import_conversations, settings as settings_router, sync
 from app.services.batch_worker import start_batch_worker
 from app.services.settings_store import load_overrides
 
@@ -24,6 +24,8 @@ def _run_migrations() -> None:
             conn.execute(text("ALTER TABLE conversations ADD COLUMN kind VARCHAR(16) DEFAULT 'chat'"))
         if "model" not in existing:
             conn.execute(text("ALTER TABLE conversations ADD COLUMN model VARCHAR(255)"))
+        if "deleted_at" not in existing:
+            conn.execute(text("ALTER TABLE conversations ADD COLUMN deleted_at DATETIME"))
 
 
 Base.metadata.create_all(bind=engine)
@@ -55,6 +57,7 @@ app.include_router(chat.router)
 app.include_router(import_conversations.router)
 app.include_router(batches.router)
 app.include_router(settings_router.router)
+app.include_router(sync.router)
 
 start_batch_worker()
 
