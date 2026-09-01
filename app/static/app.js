@@ -52,6 +52,22 @@ const els = {
   batchStatus: $("#batch-status"),
   batchSubmit: $("#batch-submit"),
   batchJobs: $("#batch-jobs"),
+  settingsBtn: $("#settings-btn"),
+  settingsModal: $("#settings-modal"),
+  settingsClose: $("#settings-close"),
+  settingsOpenrouterKey: $("#settings-openrouter-key"),
+  settingsOpenrouterHint: $("#settings-openrouter-hint"),
+  settingsGoogleProject: $("#settings-google-project"),
+  settingsGoogleLocation: $("#settings-google-location"),
+  settingsGoogleJson: $("#settings-google-json"),
+  settingsGoogleHint: $("#settings-google-hint"),
+  settingsAwsKey: $("#settings-aws-key"),
+  settingsAwsKeyHint: $("#settings-aws-key-hint"),
+  settingsAwsSecret: $("#settings-aws-secret"),
+  settingsAwsSecretHint: $("#settings-aws-secret-hint"),
+  settingsAwsRegion: $("#settings-aws-region"),
+  settingsStatus: $("#settings-status"),
+  settingsSubmit: $("#settings-submit"),
 };
 
 // ---------------------------------------------------------------
@@ -307,10 +323,91 @@ function appendMessage(msg) {
   }
 
   const text = document.createElement("div");
-  text.textContent = msg.content;
+  text.className = "message-text";
+  renderRichText(text, msg.content || "");
   div.appendChild(text);
+
+  const copyBtn = document.createElement("button");
+  copyBtn.type = "button";
+  copyBtn.className = "message-copy";
+  copyBtn.title = "Copy raw text";
+  copyBtn.textContent = "⧉ Copy";
+  copyBtn.addEventListener("click", () => copyToClipboard(msg.content || "", copyBtn));
+  div.appendChild(copyBtn);
+
   els.messages.appendChild(div);
   scrollToBottom();
+}
+
+/**
+ * Render markdown + LaTeX ($...$, $$...$$, \(...\), \[...\]) safely.
+ * Math is extracted before markdown parsing (so underscores etc. inside
+ * formulas aren't mangled by the markdown parser), rendered via KaTeX, and
+ * the resulting HTML is sanitized before insertion.
+ */
+function renderRichText(container, raw) {
+  if (typeof marked === "undefined" || typeof DOMPurify === "undefined") {
+    container.textContent = raw; // libraries failed to load (offline CDN) — plain text fallback
+    return;
+  }
+
+  const mathStore = [];
+  // Plain-ASCII placeholder: NUL/control-char markers get replaced with U+FFFD
+  // by the HTML parser during innerHTML assignment, so those don't survive.
+  const stash = (expr, displayMode) => {
+    const idx = mathStore.push({ expr, displayMode }) - 1;
+    return `@@MATHPLACEHOLDER${idx}@@`;
+  };
+
+  let text = raw
+    .replace(/\$\$([\s\S]+?)\$\$/g, (_, expr) => stash(expr, true))
+    .replace(/\\\[([\s\S]+?)\\\]/g, (_, expr) => stash(expr, true))
+    .replace(/\\\(([\s\S]+?)\\\)/g, (_, expr) => stash(expr, false))
+    .replace(/(^|[^\\$])\$([^\n$]+?)\$/g, (_, before, expr) => `${before}${stash(expr, false)}`);
+
+  let html = DOMPurify.sanitize(marked.parse(text, { breaks: true }));
+
+  html = html.replace(/@@MATHPLACEHOLDER(\d+)@@/g, (_, i) => {
+    const { expr, displayMode } = mathStore[Number(i)];
+    if (typeof katex === "undefined") return expr;
+    try {
+      return katex.renderToString(expr, { displayMode, throwOnError: false });
+    } catch {
+      return expr;
+    }
+  });
+
+  container.innerHTML = html;
+}
+
+/** Copy raw source text to the clipboard (works over plain HTTP too, unlike
+ * the Clipboard API which requires a secure context). */
+function copyToClipboard(text, btn) {
+  const done = (ok) => {
+    if (!btn) return;
+    const original = btn.textContent;
+    btn.textContent = ok ? "✓ Copied" : "✗ Failed";
+    setTimeout(() => { btn.textContent = original; }, 1500);
+  };
+
+  if (navigator.clipboard && window.isSecureContext) {
+    navigator.clipboard.writeText(text).then(() => done(true), () => done(false));
+    return;
+  }
+
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.style.position = "fixed";
+  textarea.style.opacity = "0";
+  document.body.appendChild(textarea);
+  textarea.select();
+  try {
+    done(document.execCommand("copy"));
+  } catch {
+    done(false);
+  } finally {
+    document.body.removeChild(textarea);
+  }
 }
 
 function appendError(model, error) {
@@ -576,5 +673,84 @@ els.batchSubmit.addEventListener("click", async () => {
     els.batchStatus.textContent = `Submit failed: ${err.message}`;
   } finally {
     els.batchSubmit.disabled = false;
+  }
+});
+
+// ---------------------------------------------------------------
+// Settings (provider API keys — saved to the server DB, no restart needed)
+// ---------------------------------------------------------------
+function openSettings() {
+  els.settingsStatus.className = "import-status";
+  els.settingsStatus.textContent = "";
+  els.settingsModal.classList.remove("hidden");
+  loadSettings();
+}
+
+function closeSettings() {
+  els.settingsModal.classList.add("hidden");
+}
+
+els.settingsBtn.addEventListener("click", openSettings);
+els.settingsClose.addEventListener("click", closeSettings);
+els.settingsModal.addEventListener("click", (e) => {
+  if (e.target === els.settingsModal) closeSettings();
+});
+
+async function loadSettings() {
+  try {
+    const data = await api("/api/settings");
+    els.settingsOpenrouterHint.textContent = data.openrouter_api_key.configured
+      ? `(saved: ${data.openrouter_api_key.hint})` : "(not set)";
+    els.settingsGoogleHint.textContent = data.google_service_account_json.configured
+      ? `(saved: ${data.google_service_account_json.hint})` : "(not set)";
+    els.settingsAwsKeyHint.textContent = data.aws_access_key_id.configured
+      ? `(saved: ${data.aws_access_key_id.hint})` : "(not set)";
+    els.settingsAwsSecretHint.textContent = data.aws_secret_access_key.configured
+      ? `(saved: ${data.aws_secret_access_key.hint})` : "(not set)";
+    els.settingsGoogleProject.value = data.google_project_id.value || "";
+    els.settingsGoogleLocation.value = data.google_location.value || "";
+    els.settingsAwsRegion.value = data.aws_region.value || "";
+  } catch (err) {
+    els.settingsStatus.classList.add("err");
+    els.settingsStatus.textContent = `Failed to load: ${err.message}`;
+  }
+}
+
+els.settingsSubmit.addEventListener("click", async () => {
+  const body = {};
+  const maybeAdd = (key, value) => {
+    const trimmed = value.trim();
+    if (trimmed) body[key] = trimmed;
+  };
+  maybeAdd("openrouter_api_key", els.settingsOpenrouterKey.value);
+  maybeAdd("google_project_id", els.settingsGoogleProject.value);
+  maybeAdd("google_location", els.settingsGoogleLocation.value);
+  maybeAdd("google_service_account_json", els.settingsGoogleJson.value);
+  maybeAdd("aws_access_key_id", els.settingsAwsKey.value);
+  maybeAdd("aws_secret_access_key", els.settingsAwsSecret.value);
+  maybeAdd("aws_region", els.settingsAwsRegion.value);
+
+  els.settingsSubmit.disabled = true;
+  els.settingsStatus.className = "import-status";
+  els.settingsStatus.textContent = "Saving…";
+  try {
+    await api("/api/settings", {
+      method: "PUT",
+      body: JSON.stringify(body),
+    });
+    els.settingsOpenrouterKey.value = "";
+    els.settingsGoogleJson.value = "";
+    els.settingsAwsKey.value = "";
+    els.settingsAwsSecret.value = "";
+    els.settingsStatus.classList.add("ok");
+    els.settingsStatus.textContent = "Saved. Applied immediately, no restart needed.";
+    await loadSettings();
+    await checkHealth();
+    await loadModels();
+  } catch (err) {
+    els.settingsStatus.classList.add("err");
+    els.settingsStatus.textContent = `Save failed: ${err.message}`;
+  } finally {
+    els.settingsSubmit.disabled = false;
   }
 });

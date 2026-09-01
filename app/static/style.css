@@ -207,10 +207,45 @@ input:focus, textarea:focus { outline: 2px solid var(--accent); outline-offset: 
   border-radius: var(--radius);
   white-space: pre-wrap;
   word-wrap: break-word;
+  position: relative;
 }
 .message.user { align-self: flex-end; background: var(--user-bubble); }
 .message.assistant { align-self: flex-start; background: var(--assistant-bubble); }
 .message.system { align-self: center; background: transparent; border: 1px dashed var(--border); color: var(--text-muted); font-size: 13px; }
+
+.message-text { white-space: normal; }
+.message-text p { margin: 0 0 8px; }
+.message-text p:last-child { margin-bottom: 0; }
+.message-text pre {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px;
+  overflow-x: auto;
+  font-size: 13px;
+}
+.message-text code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.9em;
+}
+.message-text :not(pre) > code {
+  background: var(--bg);
+  padding: 1px 5px;
+  border-radius: 4px;
+}
+.message-text .katex-display { margin: 8px 0; overflow-x: auto; overflow-y: hidden; }
+
+.message-copy {
+  display: inline-block;
+  margin-top: 6px;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 11px;
+  cursor: pointer;
+  padding: 2px 0;
+}
+.message-copy:hover { color: var(--text); }
 
 .message-model {
   display: block;
@@ -317,6 +352,8 @@ input:focus, textarea:focus { outline: 2px solid var(--accent); outline-offset: 
   color: var(--text-muted);
 }
 .modal-field input { margin-top: 2px; }
+.settings-hint { font-weight: 400; color: var(--text-muted); font-size: 11px; }
+
 
 .batch-jobs { margin-top: 8px; display: flex; flex-direction: column; gap: 6px; }
 .batch-job-row {

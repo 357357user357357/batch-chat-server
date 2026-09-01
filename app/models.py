@@ -20,6 +20,17 @@ class AuthToken(Base):
     expires_at: Mapped[datetime] = mapped_column(DateTime)
 
 
+class AppSetting(Base):
+    """Runtime-configurable key/value overrides (provider API keys etc.),
+    editable from the web UI so a container restart is never required."""
+
+    __tablename__ = "app_settings"
+
+    key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    value: Mapped[str] = mapped_column(Text, default="")
+    updated_at: Mapped[datetime | None] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
+
+
 class Conversation(Base):
     __tablename__ = "conversations"
 

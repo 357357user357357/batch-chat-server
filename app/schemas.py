@@ -179,6 +179,25 @@ class HealthResponse(BaseModel):
 
 
 # ---------------------------------------------------------------
+# Runtime-configurable provider credentials (web UI Settings modal)
+# ---------------------------------------------------------------
+
+
+class SettingsUpdate(BaseModel):
+    """All fields optional — only the ones sent are updated (others untouched)."""
+
+    openrouter_api_key: str | None = None
+    google_project_id: str | None = None
+    google_location: str | None = None
+    google_service_account_json: str | None = None
+    aws_access_key_id: str | None = None
+    aws_secret_access_key: str | None = None
+    aws_session_token: str | None = None
+    aws_region: str | None = None
+
+
+
+# ---------------------------------------------------------------
 # JSONL batch jobs (OpenRouter async Batch API)
 # ---------------------------------------------------------------
 

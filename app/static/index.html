@@ -5,6 +5,11 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Batch Chat</title>
   <link rel="stylesheet" href="style.css" />
+  <!-- Markdown + LaTeX rendering for assistant/user messages (CDN, no build step) -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/marked@13.0.3/marked.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/dompurify@3.1.6/dist/purify.min.js"></script>
 </head>
 <body>
   <!-- Login screen -->
@@ -31,6 +36,7 @@
         <span class="footer-actions">
           <button id="batch-btn" class="btn btn-ghost btn-small" title="Run a JSONL batch (like GCP/AWS)">⚡ Batch</button>
           <button id="import-btn" class="btn btn-ghost btn-small" title="Import from the Android app">⬆ Import</button>
+          <button id="settings-btn" class="btn btn-ghost btn-small" title="Set provider API keys">⚙ Settings</button>
           <button id="logout-btn" class="btn btn-ghost btn-small">Log out</button>
         </span>
       </div>
@@ -111,6 +117,58 @@
         <button id="batch-submit" class="btn btn-primary">Submit batch</button>
       </div>
       <div id="batch-jobs" class="batch-jobs"></div>
+    </div>
+  </div>
+
+  <!-- Settings modal (provider API keys) -->
+  <div id="settings-modal" class="modal-overlay hidden">
+    <div class="modal">
+      <div class="modal-header">
+        <h3>⚙ Provider API keys</h3>
+        <button id="settings-close" class="btn btn-ghost btn-small">✕</button>
+      </div>
+      <p class="modal-hint">
+        Saved on the server (SQLite) and applied immediately — no restart
+        needed. Leave a field blank to keep its current value.
+      </p>
+
+      <label class="modal-field">
+        OpenRouter API key <span id="settings-openrouter-hint" class="settings-hint"></span>
+        <input id="settings-openrouter-key" type="password" placeholder="sk-or-v1-…" autocomplete="off" />
+      </label>
+
+      <p class="modal-hint" style="margin-top:8px">Google Vertex AI</p>
+      <label class="modal-field">
+        Project ID
+        <input id="settings-google-project" type="text" placeholder="my-gcp-project" autocomplete="off" />
+      </label>
+      <label class="modal-field">
+        Location
+        <input id="settings-google-location" type="text" placeholder="us-central1" autocomplete="off" />
+      </label>
+      <label class="modal-field">
+        Service-account JSON key <span id="settings-google-hint" class="settings-hint"></span>
+        <textarea id="settings-google-json" rows="4" spellcheck="false" placeholder='{"type": "service_account", ...}'></textarea>
+      </label>
+
+      <p class="modal-hint" style="margin-top:8px">AWS Bedrock</p>
+      <label class="modal-field">
+        Access key ID <span id="settings-aws-key-hint" class="settings-hint"></span>
+        <input id="settings-aws-key" type="password" placeholder="AKIA…" autocomplete="off" />
+      </label>
+      <label class="modal-field">
+        Secret access key <span id="settings-aws-secret-hint" class="settings-hint"></span>
+        <input id="settings-aws-secret" type="password" placeholder="…" autocomplete="off" />
+      </label>
+      <label class="modal-field">
+        Region
+        <input id="settings-aws-region" type="text" placeholder="us-east-1" autocomplete="off" />
+      </label>
+
+      <p id="settings-status" class="import-status"></p>
+      <div class="modal-actions">
+        <button id="settings-submit" class="btn btn-primary">Save</button>
+      </div>
     </div>
   </div>
 

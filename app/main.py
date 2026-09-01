@@ -5,9 +5,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import inspect, text
 
-from app.database import Base, engine
-from app.routers import auth, batches, chat, conversations, import_conversations
+from app.database import Base, SessionLocal, engine
+from app.routers import auth, batches, chat, conversations, import_conversations, settings as settings_router
 from app.services.batch_worker import start_batch_worker
+from app.services.settings_store import load_overrides
 
 
 def _run_migrations() -> None:
@@ -28,6 +29,12 @@ def _run_migrations() -> None:
 Base.metadata.create_all(bind=engine)
 _run_migrations()
 
+_db = SessionLocal()
+try:
+    load_overrides(_db)
+finally:
+    _db.close()
+
 app = FastAPI(
     title="Batch Chat Server",
     version="1.1.0",
@@ -47,6 +54,7 @@ app.include_router(conversations.router)
 app.include_router(chat.router)
 app.include_router(import_conversations.router)
 app.include_router(batches.router)
+app.include_router(settings_router.router)
 
 start_batch_worker()
 

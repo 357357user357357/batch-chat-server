@@ -24,6 +24,8 @@ You asked which tools to use — here is the reasoning behind what's in this rep
 - 🤖 **Batch send** — one message to many models in parallel (OpenRouter, and optionally Vertex AI / Bedrock), answers stored separately per model
 - 📦 **JSONL batch jobs** — run async batches exactly like GCP Vertex AI / AWS Bedrock: paste a `.jsonl` (OpenAI/OpenRouter, Vertex, or Bedrock line formats), get answers in a conversation
 - 📥 **Import API** so you can migrate your existing Android dialogues into the server
+- ✍️ Messages render **Markdown + LaTeX** (`$...$`, `$$...$$`, `\(...\)`, `\[...\]`), and every message has a **Copy** button that copies the raw source (LaTeX included), not the rendered HTML
+- ⚙️ **Settings modal** in the web UI to set OpenRouter/Vertex/Bedrock credentials — saved to the server DB and applied immediately, no SSH or restart needed
 - ⚙️ Pure vanilla JS UI, works on mobile and desktop
 
 ## Multiple providers (OpenRouter / Vertex AI / Bedrock)
