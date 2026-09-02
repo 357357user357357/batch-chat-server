@@ -108,7 +108,10 @@ def chat_completion(
                 headers=_headers(),
                 json=payload,
             )
-            resp.raise_for_status()
+            if resp.status_code >= 400:
+                raise OpenRouterError(
+                    f"OpenRouter error (HTTP {resp.status_code}): {_safe_error(resp)}"
+                )
             data = resp.json()
     except httpx.HTTPError as exc:
         raise OpenRouterError(f"Request failed: {exc}") from exc
@@ -233,7 +236,15 @@ def extract_batch_answer(result: dict) -> tuple[str, str | None, str | None]:
 
 
 def _safe_error(resp: httpx.Response) -> str:
+    """Surface OpenRouter's human-readable `error.message` when present."""
     try:
-        return str(resp.json())
+        data = resp.json()
     except Exception:
         return resp.text[:300]
+    if isinstance(data, dict):
+        error = data.get("error")
+        if isinstance(error, dict):
+            message = error.get("message")
+            if message:
+                return str(message)
+    return str(data)[:300]
