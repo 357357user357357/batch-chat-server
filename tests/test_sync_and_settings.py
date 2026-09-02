@@ -8,7 +8,13 @@ os.environ.setdefault("DATABASE_URL", "sqlite:////tmp/bc_test_batch.db")
 
 from fastapi.testclient import TestClient  # noqa: E402
 
+from sqlalchemy import select  # noqa: E402
+from sqlalchemy.orm import selectinload  # noqa: E402
+
+from app.database import SessionLocal  # noqa: E402
 from app.main import app  # noqa: E402
+from app.models import Conversation  # noqa: E402
+from app.services.settings_store import save_overrides  # noqa: E402
 
 client = TestClient(app)
 
@@ -163,6 +169,112 @@ def test_settings_backup_roundtrip():
 
 def test_settings_backup_requires_auth():
     assert client.get("/api/settings/backup").status_code == 401
+
+
+# ---------------------------------------------------------------------------
+# Unified provider keys + delete-as-archive
+# ---------------------------------------------------------------------------
+
+def test_sync_exchanges_provider_keys():
+    """A device fills gaps on the server (server-first), and the server shares
+    its keys back down on pull."""
+    headers = auth_headers()
+
+    db = SessionLocal()
+    try:
+        # Server already has its own OpenRouter key, but Tavily is empty.
+        save_overrides(db, {"openrouter_api_key": "sk-or-v1-server", "tavily_api_key": ""})
+    finally:
+        db.close()
+
+    resp = client.post(
+        "/api/sync/push",
+        headers=headers,
+        json={
+            "dialogs": [],
+            "batches": [],
+            "deleted_external_ids": [],
+            "keys": {
+                "openrouter_api_key": "sk-or-v1-phone",
+                "tavily_api_key": "tvly-phone-secret",
+            },
+        },
+    )
+    assert resp.status_code == 200, resp.text
+
+    view = client.get("/api/settings", headers=headers).json()
+    assert view["tavily_api_key"]["configured"] is True
+
+    pulled = client.get("/api/sync/pull", headers=headers).json()
+    assert pulled["keys"]["openrouter_api_key"] == "sk-or-v1-server"  # not overwritten
+    assert pulled["keys"]["tavily_api_key"] == "tvly-phone-secret"  # adopted
+
+
+def test_delete_preserves_messages_as_archive():
+    """Tombstoning a dialog keeps its messages in the DB so the correspondence
+    can be recovered later, while the pull still reports it deleted."""
+    headers = auth_headers()
+    conv = client.post("/api/conversations", headers=headers, json={"title": "Archive me"}).json()
+    conv_id = conv["id"]
+    client.post(
+        f"/api/conversations/{conv_id}/messages",
+        headers=headers,
+        json={"role": "user", "content": "keep this"},
+    )
+
+    assert client.delete(f"/api/conversations/{conv_id}", headers=headers).status_code == 204
+
+    db = SessionLocal()
+    try:
+        row = db.scalar(
+            select(Conversation)
+            .options(selectinload(Conversation.messages))
+            .where(Conversation.id == conv_id)
+        )
+        assert row is not None
+        assert row.deleted_at is not None
+        assert [m.content for m in row.messages] == ["keep this"]
+    finally:
+        db.close()
+
+
+def test_sync_push_delete_preserves_messages_as_archive():
+    headers = auth_headers()
+    ext_id = "phone-archive-xyz"
+
+    client.post(
+        "/api/sync/push",
+        headers=headers,
+        json={
+            "dialogs": [
+                {
+                    "id": ext_id,
+                    "title": "Keep",
+                    "model": "m",
+                    "messages": [{"role": "user", "content": "tombstone me"}],
+                }
+            ],
+            "batches": [],
+            "deleted_external_ids": [],
+        },
+    )
+    client.post(
+        "/api/sync/push",
+        headers=headers,
+        json={"dialogs": [], "batches": [], "deleted_external_ids": [ext_id]},
+    )
+
+    db = SessionLocal()
+    try:
+        row = db.scalar(
+            select(Conversation)
+            .options(selectinload(Conversation.messages))
+            .where(Conversation.external_id == ext_id)
+        )
+        assert row is not None and row.deleted_at is not None
+        assert [m.content for m in row.messages] == ["tombstone me"]
+    finally:
+        db.close()
 
 
 if __name__ == "__main__":

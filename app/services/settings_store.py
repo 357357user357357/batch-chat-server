@@ -104,3 +104,34 @@ def import_backup(db: Session, data: dict) -> None:
         elif isinstance(value, str):
             updates[key] = value
     save_overrides(db, updates)
+
+
+# Secrets shared with synced devices. The Android app holds its own set of
+# provider keys (OpenRouter, Tavily) in its SecureStore; both sides fill in
+# anything the other is missing so every device ends up with one shared set.
+SYNCABLE_KEY_FIELDS = ["openrouter_api_key", "tavily_api_key"]
+
+
+def syncable_keys() -> dict[str, str]:
+    """The server's current values for keys that may be synced to devices."""
+    return {
+        field: (getattr(settings, field, "") or "")
+        for field in SYNCABLE_KEY_FIELDS
+    }
+
+
+def adopt_missing_keys(db: Session, keys: dict[str, str] | None) -> None:
+    """Adopt provider keys a synced device provided that this server lacks.
+
+    Server-first: an existing server value is never overwritten — the device
+    only fills gaps. Persisted + applied immediately (no restart needed).
+    """
+    if not keys:
+        return
+    updates: dict[str, str] = {}
+    for field in SYNCABLE_KEY_FIELDS:
+        incoming = keys.get(field)
+        if incoming and not getattr(settings, field, ""):
+            updates[field] = incoming
+    if updates:
+        save_overrides(db, updates)

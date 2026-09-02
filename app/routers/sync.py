@@ -26,6 +26,7 @@ from app.schemas import (
 )
 from app.security import get_current_token
 from app.services.phone_sync import batch_messages, dialog_messages, title_default
+from app.services.settings_store import adopt_missing_keys, syncable_keys
 
 router = APIRouter(prefix="/api/sync", tags=["sync"])
 
@@ -71,7 +72,11 @@ def pull(
                 ],
             )
         )
-    return SyncPullResponse(server_time=server_time, conversations=out)
+    return SyncPullResponse(
+        server_time=server_time,
+        conversations=out,
+        keys=syncable_keys(),
+    )
 
 
 @router.post("/push", response_model=SyncPushResponse)
@@ -113,11 +118,16 @@ def push(
         for conv in rows:
             if conv.deleted_at is not None:
                 continue
-            for msg in list(conv.messages):
-                db.delete(msg)
+            # Keep the messages as an archive in the DB; only the tombstone
+            # (deleted_at) marks it deleted. Other devices still see
+            # `deleted: true` on pull and drop their local copy.
             conv.deleted_at = utcnow()
             conv.updated_at = utcnow()
             deleted += 1
+
+    # Keys a device offered fill gaps on the server (server-first: an existing
+    # server key is never overwritten).
+    adopt_missing_keys(db, payload.keys)
 
     db.commit()
     return SyncPushResponse(created=created, updated=updated, deleted=deleted, server_time=utcnow())

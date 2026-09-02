@@ -309,15 +309,24 @@ class SyncPullResponse(BaseModel):
     # without depending on its own (possibly skewed) clock.
     server_time: datetime
     conversations: list[SyncConversationOut]
+    # Provider keys held by the server, so devices can adopt any they lack
+    # (unified keys across phone + server). Values are raw (the pull is an
+    # authenticated, password-gated endpoint just like the web UI).
+    keys: dict[str, str] = {}
 
 
 class SyncPushRequest(BaseModel):
     """Dialogs/batches created or changed locally since the last sync, plus
-    the external_ids of any deleted locally (soft-deleted on the server)."""
+    the external_ids of any deleted locally (soft-deleted on the server).
+
+    `keys` lets a device offer its provider keys so the server can adopt any
+    it is missing (unified keys across phone + server).
+    """
 
     dialogs: list[PhoneDialog] = []
     batches: list[PhoneBatch] = []
     deleted_external_ids: list[str] = []
+    keys: dict[str, str] = {}
 
 
 class SyncPushResponse(BaseModel):

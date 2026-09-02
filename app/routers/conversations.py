@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import delete, func, select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.database import get_db
@@ -92,10 +92,10 @@ def delete_conversation(
     db: Session = Depends(get_db),
     _: AuthToken = Depends(get_current_token),
 ) -> None:
-    # Soft delete (tombstone): other synced devices learn about the deletion
-    # the next time they pull, instead of silently keeping a stale copy.
+    # Soft delete (tombstone) without wiping the messages: other synced
+    # devices learn about the deletion the next time they pull (and drop their
+    # copy), while the correspondence itself stays archived in the DB.
     conv = _fetch_conversation(db, conversation_id)
-    db.execute(delete(Message).where(Message.conversation_id == conv.id))
     conv.deleted_at = utcnow()
     conv.updated_at = utcnow()
     db.commit()
