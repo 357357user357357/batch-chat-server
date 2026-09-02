@@ -31,6 +31,14 @@ class Settings(BaseSettings):
     aws_session_token: str = ""
     aws_region: str = "us-east-1"
 
+    # Tavily web search (server-side "web search" toggle in the chat)
+    tavily_api_key: str = ""
+
+    # Prompt-cache duration for OpenRouter/Anthropic requests, in seconds.
+    # Anthropic only supports ~5 minutes ("ephemeral", no ttl) or up to 1 hour
+    # ("1h"); anything >= 3600 is sent as "1h", otherwise the 5-minute default.
+    cache_duration_seconds: int = 3600
+
 
 @lru_cache
 def get_settings() -> Settings:

@@ -14,6 +14,7 @@ from app.models import AppSetting
 # app.config.Settings — every key here must be a real attribute on `settings`.
 SECRET_FIELDS = [
     "openrouter_api_key",
+    "tavily_api_key",
     "google_service_account_json",
     "aws_access_key_id",
     "aws_secret_access_key",
@@ -23,8 +24,22 @@ PLAIN_FIELDS = [
     "google_project_id",
     "google_location",
     "aws_region",
+    "cache_duration_seconds",
 ]
 ALLOWED_FIELDS = SECRET_FIELDS + PLAIN_FIELDS
+
+# Plain fields whose value is an integer (stored as text in the DB, but kept as
+# an int on the `settings` singleton and returned as an int to the UI).
+INT_FIELDS = {"cache_duration_seconds"}
+
+
+def _coerce(key: str, value):
+    if key in INT_FIELDS:
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return 0
+    return value
 
 
 def load_overrides(db: Session) -> None:
@@ -32,7 +47,7 @@ def load_overrides(db: Session) -> None:
     rows = db.scalars(select(AppSetting)).all()
     for row in rows:
         if row.key in ALLOWED_FIELDS:
-            setattr(settings, row.key, row.value)
+            setattr(settings, row.key, _coerce(row.key, row.value))
 
 
 def save_overrides(db: Session, updates: dict[str, str]) -> None:
@@ -41,12 +56,13 @@ def save_overrides(db: Session, updates: dict[str, str]) -> None:
         if key not in ALLOWED_FIELDS:
             continue
         row = db.get(AppSetting, key)
+        stored = "" if value is None else str(value)
         if row is None:
-            row = AppSetting(key=key, value=value)
+            row = AppSetting(key=key, value=stored)
             db.add(row)
         else:
-            row.value = value
-        setattr(settings, key, value)
+            row.value = stored
+        setattr(settings, key, _coerce(key, value))
     db.commit()
 
 
@@ -78,5 +94,13 @@ def export_backup() -> dict:
 def import_backup(db: Session, data: dict) -> None:
     """Restore credentials from a file produced by `export_backup`. Unknown
     keys are ignored, missing keys are left untouched (partial backups ok)."""
-    updates = {k: v for k, v in data.items() if k in ALLOWED_FIELDS and isinstance(v, str)}
+    updates: dict = {}
+    for key, value in data.items():
+        if key not in ALLOWED_FIELDS:
+            continue
+        if key in INT_FIELDS:
+            if isinstance(value, int) or (isinstance(value, str) and value.isdigit()):
+                updates[key] = value
+        elif isinstance(value, str):
+            updates[key] = value
     save_overrides(db, updates)

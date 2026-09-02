@@ -50,6 +50,41 @@ def _require_key() -> None:
         raise OpenRouterError("OpenRouter API key is not configured on the server")
 
 
+def _with_prompt_cache(
+    messages: list[dict[str, str]],
+    ttl_seconds: int,
+) -> list[dict]:
+    """Tag the stable message prefix with an Anthropic `cache_control` block.
+
+    Mirrors the Android app: the breakpoint is the second-to-last message (the
+    final message is the new question/turn and stays dynamic). TTL >= 1 hour
+    sends the extended `"1h"` cache; anything else uses the ~5 minute
+    `ephemeral` default (a numeric ttl is silently dropped by OpenRouter, so a
+    30-minute value must not be emitted as a number).
+    """
+    if ttl_seconds <= 0 or not messages:
+        return messages
+    cache_control: dict = {"type": "ephemeral"}
+    if ttl_seconds >= 3600:
+        cache_control["ttl"] = "1h"
+    breakpoint_index = len(messages) - 2 if len(messages) >= 2 else 0
+    out: list[dict] = []
+    for index, message in enumerate(messages):
+        content = message.get("content")
+        if index == breakpoint_index and isinstance(content, str):
+            out.append(
+                {
+                    "role": message.get("role", "user"),
+                    "content": [
+                        {"type": "text", "text": content, "cache_control": cache_control},
+                    ],
+                }
+            )
+        else:
+            out.append(message)
+    return out
+
+
 def chat_completion(
     model: str,
     messages: list[dict[str, str]],
@@ -58,6 +93,7 @@ def chat_completion(
 ) -> str:
     """Call a single OpenRouter model synchronously. Returns the reply text."""
     _require_key()
+    messages = _with_prompt_cache(messages, settings.cache_duration_seconds)
 
     payload: dict = {"model": model, "messages": messages}
     if temperature is not None:
@@ -95,11 +131,25 @@ def create_batch(model: str, requests: list[dict]) -> dict:
     """
     _require_key()
 
+    cached_requests: list[dict] = []
+    for request in requests:
+        item = dict(request)
+        body = item.get("body")
+        if isinstance(body, dict):
+            new_body = dict(body)
+            messages = new_body.get("messages")
+            if isinstance(messages, list):
+                new_body["messages"] = _with_prompt_cache(
+                    messages, settings.cache_duration_seconds
+                )
+            item["body"] = new_body
+        cached_requests.append(item)
+
     payload = {
         # The docs require endpoint and model serialized BEFORE requests
         "endpoint": "/v1/chat/completions",
         "model": model,
-        "requests": requests,
+        "requests": cached_requests,
     }
     try:
         with httpx.Client(timeout=REQUEST_TIMEOUT) as client:

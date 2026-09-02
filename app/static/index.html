@@ -62,6 +62,10 @@
       <div id="messages" class="messages"></div>
 
       <form id="chat-form" class="chat-form">
+        <label class="websearch-toggle" title="Search the web via Tavily and inject the results (needs a Tavily key in Settings)">
+          <input type="checkbox" id="web-search-toggle" />
+          Web search
+        </label>
         <textarea id="chat-input" rows="3" placeholder="Write a message… (Ctrl+Enter to send)" required></textarea>
         <button type="submit" class="btn btn-primary" id="send-btn">Send</button>
       </form>
@@ -137,6 +141,14 @@
         <input id="settings-openrouter-key" type="password" placeholder="sk-or-v1-…" autocomplete="off" />
       </label>
 
+      <label class="modal-field">
+        Tavily API key <span id="settings-tavily-hint" class="settings-hint"></span>
+        <input id="settings-tavily-key" type="password" placeholder="tvly-…" autocomplete="off" />
+      </label>
+      <p class="modal-hint">
+        Enables the "Web search" toggle in the chat (internet lookups).
+      </p>
+
       <p class="modal-hint" style="margin-top:8px">Google Vertex AI</p>
       <label class="modal-field">
         Project ID
@@ -164,6 +176,18 @@
         Region
         <input id="settings-aws-region" type="text" placeholder="us-east-1" autocomplete="off" />
       </label>
+
+      <p class="modal-hint" style="margin-top:8px">Prompt cache</p>
+      <label class="modal-field">
+        Cache duration
+        <select id="settings-cache-duration">
+          <option value="300">5 minutes</option>
+          <option value="3600">1 hour</option>
+        </select>
+      </label>
+      <p class="modal-hint">
+        How long reused prompt text stays cached for OpenRouter/Anthropic calls.
+      </p>
 
       <p id="settings-status" class="import-status"></p>
       <div class="modal-actions">

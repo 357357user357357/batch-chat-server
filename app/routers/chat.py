@@ -13,6 +13,7 @@ from app.schemas import (
     MessageOut,
 )
 from app.security import get_current_token
+from app.services import tavily
 from app.services.providers import ProviderError, chat_completion, default_models
 
 router = APIRouter(prefix="/api/chat", tags=["chat"])
@@ -60,9 +61,24 @@ def send_chat(
         )
     ]
 
+    # Optional Tavily web search, injected into the system prompt like the app.
+    system = payload.system or ""
+    if payload.web_search and tavily.is_configured():
+        try:
+            results = tavily.search_web(payload.user_message, max_results=3)
+            if results:
+                suffix = (
+                    "Use the most relevant web context below when answering.\n\n"
+                    + tavily.web_search_context(payload.user_message, results)
+                )
+                system = (system + "\n\n" + suffix).strip()
+        except ProviderError:
+            # A failed search shouldn't block the chat — answer without context.
+            pass
+
     messages: list[dict[str, str]] = []
-    if payload.system:
-        messages.append({"role": "system", "content": payload.system})
+    if system:
+        messages.append({"role": "system", "content": system})
     for role, content, _model in history:
         messages.append({"role": role, "content": content})
 

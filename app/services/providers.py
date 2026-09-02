@@ -6,7 +6,7 @@
 """
 
 from app.config import settings
-from app.services import bedrock, openrouter, vertex_ai
+from app.services import bedrock, openrouter, tavily, vertex_ai
 from app.services.provider_errors import ProviderError
 
 __all__ = ["ProviderError", "chat_completion", "default_models", "configured_status"]
@@ -39,4 +39,5 @@ def configured_status() -> dict[str, bool]:
         "openrouter_configured": bool(settings.openrouter_api_key),
         "vertex_configured": vertex_ai.is_configured(),
         "bedrock_configured": bedrock.is_configured(),
+        "tavily_configured": tavily.is_configured(),
     }

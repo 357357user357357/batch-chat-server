@@ -291,6 +291,18 @@ input:focus, textarea:focus { outline: 2px solid var(--accent); outline-offset: 
 
 .chat-form textarea { flex: 1; }
 
+.websearch-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  cursor: pointer;
+  user-select: none;
+}
+.websearch-toggle input { width: auto; margin: 0; }
+
 /* ---------- Model picker ---------- */
 .model-picker { position: relative; }
 
@@ -377,6 +389,15 @@ input:focus, textarea:focus { outline: 2px solid var(--accent); outline-offset: 
   color: var(--text-muted);
 }
 .modal-field input { margin-top: 2px; }
+.modal-field select {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 14px;
+}
 .settings-hint { font-weight: 400; color: var(--text-muted); font-size: 11px; }
 
 

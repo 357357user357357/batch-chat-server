@@ -71,6 +71,9 @@ class ChatRequest(BaseModel):
     system: str | None = None
     temperature: float | None = None
     max_tokens: int | None = None
+    # When true, run a Tavily web search and inject the top results into the
+    # system prompt (like the Android app's web-search feature).
+    web_search: bool = False
 
 
 class ChatResponseItem(BaseModel):
@@ -176,6 +179,7 @@ class HealthResponse(BaseModel):
     openrouter_configured: bool
     vertex_configured: bool = False
     bedrock_configured: bool = False
+    tavily_configured: bool = False
 
 
 # ---------------------------------------------------------------
@@ -187,6 +191,7 @@ class SettingsUpdate(BaseModel):
     """All fields optional — only the ones sent are updated (others untouched)."""
 
     openrouter_api_key: str | None = None
+    tavily_api_key: str | None = None
     google_project_id: str | None = None
     google_location: str | None = None
     google_service_account_json: str | None = None
@@ -194,6 +199,7 @@ class SettingsUpdate(BaseModel):
     aws_secret_access_key: str | None = None
     aws_session_token: str | None = None
     aws_region: str | None = None
+    cache_duration_seconds: int | None = None
 
 
 class SettingsBackup(BaseModel):
@@ -203,6 +209,7 @@ class SettingsBackup(BaseModel):
     model_config = ConfigDict(extra="allow")
 
     openrouter_api_key: str = ""
+    tavily_api_key: str = ""
     google_project_id: str = ""
     google_location: str = ""
     google_service_account_json: str = ""
@@ -210,6 +217,7 @@ class SettingsBackup(BaseModel):
     aws_secret_access_key: str = ""
     aws_session_token: str = ""
     aws_region: str = ""
+    cache_duration_seconds: int = 3600
 
 
 # ---------------------------------------------------------------

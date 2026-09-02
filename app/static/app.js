@@ -32,6 +32,7 @@ const els = {
   chatForm: $("#chat-form"),
   chatInput: $("#chat-input"),
   sendBtn: $("#send-btn"),
+  webSearchToggle: $("#web-search-toggle"),
   modelPickerBtn: $("#model-picker-btn"),
   modelDropdown: $("#model-dropdown"),
   modelCheckboxes: $("#model-checkboxes"),
@@ -57,6 +58,9 @@ const els = {
   settingsClose: $("#settings-close"),
   settingsOpenrouterKey: $("#settings-openrouter-key"),
   settingsOpenrouterHint: $("#settings-openrouter-hint"),
+  settingsTavilyKey: $("#settings-tavily-key"),
+  settingsTavilyHint: $("#settings-tavily-hint"),
+  settingsCacheDuration: $("#settings-cache-duration"),
   settingsGoogleProject: $("#settings-google-project"),
   settingsGoogleLocation: $("#settings-google-location"),
   settingsGoogleJson: $("#settings-google-json"),
@@ -156,6 +160,7 @@ async function checkHealth() {
       data.openrouter_configured && "OpenRouter",
       data.vertex_configured && "Vertex AI",
       data.bedrock_configured && "Bedrock",
+      data.tavily_configured && "Tavily",
     ].filter(Boolean);
     els.serverStatus.title = configured.length
       ? `Server OK · configured: ${configured.join(", ")}`
@@ -515,6 +520,7 @@ els.chatForm.addEventListener("submit", async (e) => {
         user_message: text,
         models: state.selectedModels,
         conversation_id: state.currentConversationId,
+        web_search: els.webSearchToggle.checked,
       }),
     });
 
@@ -764,6 +770,10 @@ async function loadSettings() {
     const data = await api("/api/settings");
     els.settingsOpenrouterHint.textContent = data.openrouter_api_key.configured
       ? `(saved: ${data.openrouter_api_key.hint})` : "(not set)";
+    els.settingsTavilyHint.textContent = data.tavily_api_key.configured
+      ? `(saved: ${data.tavily_api_key.hint})` : "(not set)";
+    const cacheSeconds = data.cache_duration_seconds && data.cache_duration_seconds.value;
+    if (cacheSeconds) els.settingsCacheDuration.value = String(cacheSeconds);
     els.settingsGoogleHint.textContent = data.google_service_account_json.configured
       ? `(saved: ${data.google_service_account_json.hint})` : "(not set)";
     els.settingsAwsKeyHint.textContent = data.aws_access_key_id.configured
@@ -786,12 +796,17 @@ els.settingsSubmit.addEventListener("click", async () => {
     if (trimmed) body[key] = trimmed;
   };
   maybeAdd("openrouter_api_key", els.settingsOpenrouterKey.value);
+  maybeAdd("tavily_api_key", els.settingsTavilyKey.value);
   maybeAdd("google_project_id", els.settingsGoogleProject.value);
   maybeAdd("google_location", els.settingsGoogleLocation.value);
   maybeAdd("google_service_account_json", els.settingsGoogleJson.value);
   maybeAdd("aws_access_key_id", els.settingsAwsKey.value);
   maybeAdd("aws_secret_access_key", els.settingsAwsSecret.value);
   maybeAdd("aws_region", els.settingsAwsRegion.value);
+  const cacheSeconds = parseInt(els.settingsCacheDuration.value, 10);
+  if (cacheSeconds === 300 || cacheSeconds === 3600) {
+    body.cache_duration_seconds = cacheSeconds;
+  }
 
   els.settingsSubmit.disabled = true;
   els.settingsStatus.className = "import-status";
@@ -802,6 +817,7 @@ els.settingsSubmit.addEventListener("click", async () => {
       body: JSON.stringify(body),
     });
     els.settingsOpenrouterKey.value = "";
+    els.settingsTavilyKey.value = "";
     els.settingsGoogleJson.value = "";
     els.settingsAwsKey.value = "";
     els.settingsAwsSecret.value = "";
