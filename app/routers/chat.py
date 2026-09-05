@@ -1,4 +1,5 @@
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
@@ -17,6 +18,24 @@ from app.services import tavily
 from app.services.providers import ProviderError, chat_completion, default_models
 
 router = APIRouter(prefix="/api/chat", tags=["chat"])
+
+
+def system_prompt_with_current_time(user_system: str | None) -> str:
+    """Prepend the server's current date/time to the system prompt.
+
+    Models have no clock, so without this a question like "what time is it
+    now" gets answered from training data or — worse — from whatever time a
+    fetched web page happens to mention. The server clock is authoritative.
+    """
+    now = datetime.now(timezone.utc)
+    base = (
+        f"Current date and time: {now.strftime('%A, %d %B %Y, %H:%M UTC')} "
+        "(the reliable server clock). Answer questions about the current "
+        "time, date, or day of the week from this — never from web snippets "
+        "or training data."
+    )
+    text = (user_system or "").strip()
+    return f"{base}\n\n{text}".strip()
 
 
 @router.get("/models")
@@ -80,6 +99,11 @@ def send_chat(
         except ProviderError:
             # A failed search shouldn't block the chat — answer without context.
             pass
+
+    # The model has no clock of its own: give it the server's real date/time
+    # so questions like "what time is it now" are answered correctly and stale
+    # web snippets can't pose as the present moment.
+    system = system_prompt_with_current_time(system)
 
     messages: list[dict[str, str]] = []
     if system:

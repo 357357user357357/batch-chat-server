@@ -55,19 +55,43 @@ def search_web(query: str, max_results: int = 3) -> list[dict]:
                 "title": item.get("title") or "Untitled result",
                 "url": url,
                 "content": content,
+                # Tavily includes this for some pages — helps the model judge
+                # how fresh a snippet is instead of trusting it blindly.
+                "published_date": item.get("published_date") or "",
             }
         )
     return items
 
 
 def web_search_context(query: str, results: list[dict]) -> str:
-    """Format Tavily results as a compact context block for the system prompt."""
+    """Format Tavily results as a compact context block for the system prompt.
+
+    The block is stamped with the search time and the instruction that the
+    system prompt's current date/time is authoritative — otherwise models
+    treat whatever a page says ("updated Sep 4, 10:02 AM…") as the present.
+    """
+    from datetime import datetime, timezone
+
+    searched_at = datetime.now(timezone.utc).strftime("%A, %d %B %Y, %H:%M UTC")
     if not results:
-        return f'Web search results for "{query}": none.'
+        return (
+            f'Web search results for "{query}" (searched at {searched_at}): none.'
+        )
 
     lines: list[str] = []
     for index, result in enumerate(results):
         content = " ".join(result["content"].split())
         snippet = content if len(content) <= 280 else content[:280] + "…"
-        lines.append(f"{index + 1}. {result['title']}\n   {result['url']}\n   {snippet}")
-    return f'Web search results for "{query}":\n\n' + "\n\n".join(lines)
+        published = result.get("published_date") or ""
+        published_note = f" (page published: {published})" if published else ""
+        lines.append(
+            f"{index + 1}. {result['title']}{published_note}\n"
+            f"   {result['url']}\n"
+            f"   {snippet}"
+        )
+    return (
+        f'Web search results for "{query}" (searched at {searched_at} UTC — '
+        "snippets may be outdated; use the Current date and time from this "
+        "system prompt as 'now', never the times found inside pages):\n\n"
+        + "\n\n".join(lines)
+    )
