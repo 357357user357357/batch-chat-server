@@ -659,6 +659,43 @@ def test_chat_send_rejects_invalid_reasoning_effort():
     assert resp.status_code == 422
 
 
+def test_pull_always_delivers_tombstones_regardless_of_since():
+    """Deletions must reach every device even if its `since` cursor is newer
+    than the deletion (e.g. the device synced after the deletion but failed to
+    apply it): tombstones are re-delivered on every pull until wiped."""
+    import sqlite3
+
+    from app.database import engine
+
+    headers = auth_headers()
+    phone_headers = {**headers, "X-Device-Name": "redmi-note-9t"}
+    dialog = {"id": "tombstone-always", "title": "AlwaysDeliver", "model": "m",
+              "messages": [{"role": "user", "content": "x"}]}
+
+    resp = client.post("/api/sync/push", headers=phone_headers,
+                       json={"dialogs": [dialog], "batches": [],
+                             "deleted_external_ids": [], "keys": {}})
+    assert resp.status_code == 200
+
+    with sqlite3.connect(engine.url.database) as conn:
+        conv_id = conn.execute(
+            "SELECT id FROM conversations WHERE external_id='tombstone-always'"
+        ).fetchone()[0]
+    assert client.delete(f"/api/conversations/{conv_id}", headers=headers).status_code == 204
+
+    # A `since` stamp NEWER than the deletion must still deliver the tombstone.
+    later = client.get("/api/sync/pull", headers=headers).json()["server_time"]
+    pulled = client.get(f"/api/sync/pull?since={later}", headers=headers).json()
+    dlg = next(c for c in pulled["conversations"] if c["external_id"] == "tombstone-always")
+    assert dlg["deleted"] is True
+
+    # Cleanup (hard, test-only).
+    with sqlite3.connect(engine.url.database) as conn:
+        conn.execute("DELETE FROM message_tombstones WHERE conversation_id=?", (conv_id,))
+        conn.execute("DELETE FROM messages WHERE conversation_id=?", (conv_id,))
+        conn.execute("DELETE FROM conversations WHERE id=?", (conv_id,))
+
+
 def test_sync_audit_trail_attribution():
     """Master-server archive: every record remembers whose it was, who last
     modified it, and when/by whom it was deleted — and soft-deleted records

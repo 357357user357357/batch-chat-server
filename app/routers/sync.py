@@ -45,10 +45,22 @@ def pull(
 ) -> SyncPullResponse:
     server_time = utcnow()
 
+    from sqlalchemy import or_
+
     query = select(Conversation).options(selectinload(Conversation.messages))
     if since:
         since_dt = _parse_since(since)
-        query = query.where(Conversation.updated_at > since_dt)
+        # Tombstoned (deleted) dialogs are ALWAYS included, regardless of the
+        # `since` cursor: a device that synced between a deletion and now (or
+        # missed the tombstone for any reason) still learns about the deletion
+        # and drops its stale local copy on the next pull. They carry no
+        # messages, so the extra payload is tiny.
+        query = query.where(
+            or_(
+                Conversation.updated_at > since_dt,
+                Conversation.deleted_at.is_not(None),
+            )
+        )
     # Only "chat"/"batch" dialogs that a device could have created; kind is
     # kept as-is (both are just Conversation rows, see models.py).
     convs = db.scalars(query.order_by(Conversation.id)).all()
