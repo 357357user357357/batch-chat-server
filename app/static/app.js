@@ -611,7 +611,14 @@ function renderRichText(container, raw) {
     .replace(/`[^`\n]+`/g, (m) =>
       `@@BCSTASH${codeStore.push(`<code>${escapeHtml(m.slice(1, -1))}</code>`) - 1}@@`);
 
-  // 2. Explicit math delimiters.
+  // 2. Bare LaTeX / ASCII powers WITHOUT any delimiters → wrap in $…$ / $$…$$
+  //    FIRST (it protects already-delimited math itself), so that everything
+  //    ends up in explicit delimiters…
+  text = autoDelimitRawLatex(text);
+
+  // 3. …which are stashed here. The single-$ rule mirrors the phone app: the
+  //    char right inside each dollar must be a non-space, so "$5 and $10"
+  //    stays money instead of becoming math.
   const mathStore = [];
   const stashMath = (expr, displayMode) => {
     const idx = mathStore.push({ expr, displayMode }) - 1;
@@ -621,20 +628,17 @@ function renderRichText(container, raw) {
     .replace(/\$\$([\s\S]+?)\$\$/g, (_, expr) => stashMath(expr, true))
     .replace(/\\\[([\s\S]+?)\\\]/g, (_, expr) => stashMath(expr, true))
     .replace(/\\\(([\s\S]+?)\\\)/g, (_, expr) => stashMath(expr, false))
-    .replace(/(^|[^\\$])\$([^\n$]+?)\$/g, (_, before, expr) => `${before}${stashMath(expr, false)}`);
-
-  // 3. Bare LaTeX without any delimiters → wrap in $…$ / $$…$$.
-  text = autoDelimitRawLatex(text);
+    .replace(/(^|[^\\$])\$([^\s$](?:[^$\n]*[^\s$])?)\$/g, (_, before, expr) => `${before}${stashMath(expr, false)}`);
 
   let html = DOMPurify.sanitize(marked.parse(text, { breaks: true }));
 
   html = html.replace(/@@MATHPLACEHOLDER(\d+)@@/g, (_, i) => {
     const { expr, displayMode } = mathStore[Number(i)];
-    if (typeof katex === "undefined") return expr;
+    if (typeof katex === "undefined") return `$${expr}$`; // KaTeX failed to load — keep delimiters visible
     try {
       return katex.renderToString(expr, { displayMode, throwOnError: false });
     } catch {
-      return expr;
+      return `$${expr}$`;
     }
   });
   html = html.replace(/@@BCSTASH(\d+)@@/g, (_, i) => codeStore[Number(i)]);
