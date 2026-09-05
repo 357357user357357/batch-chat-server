@@ -317,16 +317,26 @@ function renderModelCheckboxes() {
       cb.addEventListener("change", () => toggleModel(model, cb.checked));
     }
     label.append(cb, model);
-    const price = state.modelPricing && state.modelPricing[model];
+    const price = modePrice(model);
     if (price) {
       const span = document.createElement("span");
       span.className = "model-price";
-      span.title = "USD per 1M tokens (prompt / completion)";
+      span.title = `USD per 1M tokens (prompt / completion) — ${state.chatMode} tier`;
       span.textContent = `· $${fmtPrice(price.prompt)} / $${fmtPrice(price.completion)} /1M`;
       label.append(span);
     }
     els.modelCheckboxes.appendChild(label);
   });
+}
+
+// Mode-aware pricing: the server returns {live, flex, batch} per model —
+// Flex and Batch run at a 50% discount vs the standard tier. Falls back to
+// the legacy flat shape when the server predates per-mode pricing.
+function modePrice(model) {
+  const p = state.modelPricing && state.modelPricing[model];
+  if (!p) return null;
+  if (p.live || p.flex || p.batch) return p[state.chatMode] || p.live || null;
+  return p;
 }
 
 // Per-1M-token price formatting (same style as the phone app).

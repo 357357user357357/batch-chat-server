@@ -799,8 +799,8 @@ def test_message_deletion_records_deleted_by():
         conn.execute("DELETE FROM conversations WHERE id=?", (conv["id"],))
 
 def test_models_endpoint_includes_pricing(monkeypatch):
-    """The model picker endpoint exposes per-token pricing for the picker
-    models; :batch ids are priced at ~50% of the standard price."""
+    """The model picker endpoint exposes per-token pricing PER CHAT MODE for
+    the picker models: live = catalog price, flex/batch = 50% discount."""
     import app.routers.chat as chat_router
     import app.services.openrouter as openrouter
 
@@ -825,9 +825,15 @@ def test_models_endpoint_includes_pricing(monkeypatch):
         raising=False,
     )
     data = client.get("/api/chat/models").json()
-    assert data["pricing"]["openai/gpt-6-astra"]["prompt"] == 2e-06
+    # Live tier = plain catalog price.
+    live = data["pricing"]["openai/gpt-6-astra"]["live"]
+    assert live["prompt"] == 2e-06 and live["completion"] == 8e-06
+    # Flex and Batch tiers cost 50% of the standard price.
+    for mode in ("flex", "batch"):
+        tier = data["pricing"]["openai/gpt-6-astra"][mode]
+        assert tier["prompt"] == 1e-06 and tier["completion"] == 4e-06
     # DeepSeek's floating alias resolves through its plain catalog id.
     assert "~deepseek/deepseek-v4-flash-latest" in data["pricing"]
-    # Async batch ids cost ~50% of the standard price.
-    batch = data["pricing"]["anthropic/claude-fable-5.1:batch"]
+    # An explicit async batch id is priced per tier as well.
+    batch = data["pricing"]["anthropic/claude-fable-5.1:batch"]["batch"]
     assert batch["prompt"] == 1.5e-06 and batch["completion"] == 7.5e-06
