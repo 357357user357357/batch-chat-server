@@ -25,8 +25,6 @@ BATCH_ERROR_STATUSES = frozenset({"failed", "expired", "cancelled"})
 # Keeping tiers as plain suffixes means any future model works with zero code
 # changes: just type "vendor/new-model:flex" in the picker.
 DEFAULT_MODELS = [
-    "z-ai/glm-5.3",
-    "z-ai/glm-5.3-flash",
     "openai/gpt-6-astra",
     "openai/gpt-6-astra-pro",
     "~deepseek/deepseek-v4-flash-latest",

@@ -206,14 +206,14 @@ async function loadModels() {
 
     // One-time cleanup: the default model list was trimmed — drop saved
     // selections that no longer exist (custom models added afterwards stay).
-    if (!localStorage.getItem("bc_models_pruned_v3")) {
+    if (!localStorage.getItem("bc_models_pruned_v4")) {
       const known = new Set(state.defaultModels);
       state.selectedModels = (state.selectedModels || []).filter((m) => known.has(m));
       if (!state.selectedModels.length) state.selectedModels = [batchChatDefault()];
       if (!state.liveModel || !known.has(state.liveModel) || state.liveModel.endsWith(":batch")) {
         state.liveModel = data.default_live_model || state.defaultModels.find((m) => !m.includes(":batch")) || state.defaultModels[0] || null;
       }
-      localStorage.setItem("bc_models_pruned_v3", "1");
+      localStorage.setItem("bc_models_pruned_v4", "1");
       saveModels();
       saveChatMode();
     }
