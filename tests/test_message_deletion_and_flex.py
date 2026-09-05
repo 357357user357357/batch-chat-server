@@ -450,10 +450,14 @@ def test_keepalive_pings_endpoint_reports_log():
     monkeypatch_free_headers = auth_headers()
     conv = client.post("/api/conversations", headers=monkeypatch_free_headers,
                        json={"title": "ping-feed"}).json()
+    # Enable warming through the API so the DB flag (the feed's source of
+    # truth) is set, like the web UI does.
+    resp = client.post(f"/api/conversations/{conv['id']}/keepalive",
+                       headers=monkeypatch_free_headers, json={"enabled": True})
+    assert resp.status_code == 200
 
     # Simulate one successful ping attempt via the keeper's own log.
     cache_keeper.record(conv["id"], "SYS", ["openai/gpt-4o-mini"])
-    cache_keeper.set_enabled(conv["id"], True)
     import time as time_mod
 
     real_time = time_mod.time
