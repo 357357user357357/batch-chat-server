@@ -5,7 +5,13 @@ services:
     restart: unless-stopped
     env_file:
       - .env
+    command: >
+      uvicorn app.main:app --host 0.0.0.0 --port 8000
+      --ssl-keyfile /certs/server.key
+      --ssl-certfile /certs/server.crt
     ports:
       - "8000:8000"
+      - "8443:8000"
     volumes:
       - ./data:/app/data
+      - ./certs:/certs:ro
