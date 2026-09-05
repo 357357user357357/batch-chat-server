@@ -25,12 +25,13 @@ PLAIN_FIELDS = [
     "google_location",
     "aws_region",
     "cache_duration_seconds",
+    "cache_keepalive_hours",
 ]
 ALLOWED_FIELDS = SECRET_FIELDS + PLAIN_FIELDS
 
 # Plain fields whose value is an integer (stored as text in the DB, but kept as
 # an int on the `settings` singleton and returned as an int to the UI).
-INT_FIELDS = {"cache_duration_seconds"}
+INT_FIELDS = {"cache_duration_seconds", "cache_keepalive_hours"}
 
 
 def _coerce(key: str, value):

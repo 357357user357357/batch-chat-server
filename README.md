@@ -29,6 +29,7 @@ You asked which tools to use — here is the reasoning behind what's in this rep
 - 🗑️ **Delete any question/answer inside a dialogue** from the web — the text stays archived in the server DB, and every synced device (including the phone) drops it on the next sync
 - 🔁 **Key sync** — OpenRouter/Tavily keys are unified between phone and server (gaps filled both ways, server-first)
 - ⚡ **Flex processing tier** — append `:flex` to any model (e.g. `openai/gpt-6-astra:flex`) for the cheaper `service_tier="flex"` processing; if the provider doesn't serve flex for that model, the server falls back to the standard tier automatically (or run it through the Batch API)
+- 🔥 **Cache keep-alive** — after the last chat, near-empty pings (every 45 min) refresh the 1-hour prompt cache at ~10% of input cost, keeping replies cheap for 2–24 hours instead of just one (Settings → Cache keep-alive; 0 = off)
 - ⚙️ Pure vanilla JS UI, works on mobile and desktop
 
 ## Multiple providers (OpenRouter / Vertex AI / Bedrock)

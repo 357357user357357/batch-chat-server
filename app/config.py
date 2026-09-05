@@ -39,6 +39,12 @@ class Settings(BaseSettings):
     # ("1h"); anything >= 3600 is sent as "1h", otherwise the 5-minute default.
     cache_duration_seconds: int = 3600
 
+    # Cache keep-alive: after the last real chat request, periodically send a
+    # near-empty request that hits and refreshes the 1-hour prompt cache, so a
+    # cache written at 1-hour price stays cheap for this many hours instead of
+    # just one (0 = disabled). Pings go out every 45 minutes (< the 1h TTL).
+    cache_keepalive_hours: int = 3
+
     # CORS origins allowed to call the API, comma-separated. "*" (default)
     # keeps phone/PC clients working over LAN IPs; tighten it (e.g.
     # "https://chat.example.com") when the server sits behind a real domain.

@@ -15,7 +15,7 @@ from app.schemas import (
     MessageOut,
 )
 from app.security import get_current_token
-from app.services import tavily
+from app.services import cache_keeper, tavily
 from app.services.providers import ProviderError, chat_completion, default_models
 
 router = APIRouter(prefix="/api/chat", tags=["chat"])
@@ -171,6 +171,14 @@ def send_chat(
     for item in ordered:
         # Expose the DB id so the web UI can delete a fresh answer right away
         item.message_id = assistant_ids.get(item.model)
+    # Register the conversation for cache keep-alive (exact system prompt +
+    # answered models), so the 1-hour cache stays cheap for hours longer.
+    ok_models = [i.model for i in ordered if i.ok]
+    if ok_models:
+        try:
+            cache_keeper.touch(conv.id, system, ok_models)
+        except Exception:  # keep-alive must never break the chat
+            pass
     return ChatResponse(
         conversation_id=conv.id,
         conversation_title=conv.title,

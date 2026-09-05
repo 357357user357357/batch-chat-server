@@ -67,6 +67,7 @@ const els = {
   settingsTavilyKey: $("#settings-tavily-key"),
   settingsTavilyHint: $("#settings-tavily-hint"),
   settingsCacheDuration: $("#settings-cache-duration"),
+  settingsKeepalive: $("#settings-keepalive"),
   settingsGoogleProject: $("#settings-google-project"),
   settingsGoogleLocation: $("#settings-google-location"),
   settingsGoogleJson: $("#settings-google-json"),
@@ -897,6 +898,10 @@ async function loadSettings() {
       ? `(saved: ${data.tavily_api_key.hint})` : "(not set)";
     const cacheSeconds = data.cache_duration_seconds && data.cache_duration_seconds.value;
     if (cacheSeconds) els.settingsCacheDuration.value = String(cacheSeconds);
+    const keepaliveHours = data.cache_keepalive_hours && data.cache_keepalive_hours.value;
+    if (keepaliveHours !== undefined && keepaliveHours !== null) {
+      els.settingsKeepalive.value = String(keepaliveHours);
+    }
     els.settingsGoogleHint.textContent = data.google_service_account_json.configured
       ? `(saved: ${data.google_service_account_json.hint})` : "(not set)";
     els.settingsAwsKeyHint.textContent = data.aws_access_key_id.configured
@@ -929,6 +934,10 @@ els.settingsSubmit.addEventListener("click", async () => {
   const cacheSeconds = parseInt(els.settingsCacheDuration.value, 10);
   if (cacheSeconds === 300 || cacheSeconds === 3600) {
     body.cache_duration_seconds = cacheSeconds;
+  }
+  const keepaliveHours = parseInt(els.settingsKeepalive.value, 10);
+  if (!Number.isNaN(keepaliveHours) && keepaliveHours >= 0) {
+    body.cache_keepalive_hours = keepaliveHours; // 0 = off — must be savable too
   }
 
   els.settingsSubmit.disabled = true;

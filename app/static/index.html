@@ -194,6 +194,23 @@
         How long reused prompt text stays cached for OpenRouter/Anthropic calls.
       </p>
 
+      <p class="modal-hint" style="margin-top:8px">Cache keep-alive</p>
+      <label class="modal-field">
+        Keep cache warm for
+        <select id="settings-keepalive">
+          <option value="0">Off (1 hour max)</option>
+          <option value="2">2 hours</option>
+          <option value="3">3 hours</option>
+          <option value="6">6 hours</option>
+          <option value="12">12 hours</option>
+          <option value="24">24 hours</option>
+        </select>
+      </label>
+      <p class="modal-hint">
+        After the last chat, near-empty pings (every 45 min) refresh the 1-hour
+        cache at ~10% of input cost, keeping replies cheap for longer.
+      </p>
+
       <p id="settings-status" class="import-status"></p>
       <div class="modal-actions">
         <button id="settings-submit" class="btn btn-primary">Save</button>

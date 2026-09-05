@@ -9,6 +9,7 @@ from app.config import settings
 from app.database import Base, SessionLocal, engine
 from app.routers import auth, batches, chat, conversations, import_conversations, settings as settings_router, sync
 from app.services.batch_worker import start_batch_worker
+from app.services.cache_keeper import start_cache_keeper
 from app.services.settings_store import load_overrides
 
 
@@ -65,6 +66,7 @@ app.include_router(settings_router.router)
 app.include_router(sync.router)
 
 start_batch_worker()
+start_cache_keeper()
 
 # Serve the static web UI (Plain HTML/JS, no build step required)
 ui_dir = Path(__file__).parent / "static"

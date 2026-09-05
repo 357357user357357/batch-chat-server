@@ -207,6 +207,7 @@ class SettingsUpdate(BaseModel):
     aws_session_token: str | None = None
     aws_region: str | None = None
     cache_duration_seconds: int | None = None
+    cache_keepalive_hours: int | None = None
 
 
 class SettingsBackup(BaseModel):
@@ -225,6 +226,7 @@ class SettingsBackup(BaseModel):
     aws_session_token: str = ""
     aws_region: str = ""
     cache_duration_seconds: int = 3600
+    cache_keepalive_hours: int = 3
 
 
 # ---------------------------------------------------------------

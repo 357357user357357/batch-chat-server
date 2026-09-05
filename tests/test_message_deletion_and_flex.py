@@ -329,3 +329,86 @@ def test_chat_completion_sends_base_model_for_plain_models(monkeypatch):
     assert answer == "ok"
     assert len(calls) == 1
     assert "service_tier" not in calls[0]
+
+
+# ---------------------------------------------------------------------------
+# Cache keep-alive (cheap 1-hour TTL extension via near-empty pings)
+# ---------------------------------------------------------------------------
+
+def test_cache_keeper_pings_due_conversations(monkeypatch):
+    """After the keep-alive window elapses, entries are dropped; due models get
+    exactly one near-empty ping that reuses the registered system prompt."""
+    from app.services import cache_keeper
+    from app.config import settings as app_settings
+
+    cache_keeper.reset_for_tests()
+    monkeypatch.setattr(app_settings, "cache_keepalive_hours", 3)
+    monkeypatch.setattr(app_settings, "cache_duration_seconds", 3600)
+
+    headers = auth_headers()
+    conv = client.post("/api/conversations", headers=headers, json={"title": "keeper"}).json()
+    client.post(
+        f"/api/conversations/{conv['id']}/messages",
+        headers=headers,
+        json={"role": "user", "content": "keeper question"},
+    ).json()
+
+    # Simulate a real request having happened 46 minutes ago.
+    import time as time_mod
+
+    old_now = time_mod.time
+    monkeypatch.setattr(
+        cache_keeper.time, "time", lambda: old_now() - 46 * 60, raising=False
+    )
+    cache_keeper.touch(
+        conv["id"],
+        "TEST SYSTEM PROMPT",
+        ["openai/gpt-4o-mini", "openai/gpt-4o-mini", "anthropic/claude-fable-5.1:batch"],
+    )
+    monkeypatch.setattr(cache_keeper.time, "time", old_now, raising=False)
+
+    pings: list[dict] = []
+
+    def fake_completion(model, messages, temperature=None, max_tokens=None):
+        pings.append({"model": model, "messages": messages, "max_tokens": max_tokens})
+        return "."
+
+    monkeypatch.setattr(cache_keeper, "PING_INTERVAL_SECONDS", 60)
+    monkeypatch.setattr("app.services.openrouter.chat_completion", fake_completion)
+    cache_keeper._tick()
+
+    # ":batch" model is skipped (async-only id); the plain model got one ping.
+    assert len(pings) == 1
+    ping = pings[0]
+    assert ping["model"] == "openai/gpt-4o-mini"
+    assert ping["max_tokens"] == cache_keeper.PING_MAX_TOKENS
+    # Exact registered system prompt + stored history + the "." keep-alive turn
+    assert ping["messages"][0] == {"role": "system", "content": "TEST SYSTEM PROMPT"}
+    assert ping["messages"][-1] == {"role": "user", "content": "."}
+    assert any(m["content"] == "keeper question" for m in ping["messages"])
+
+    # Second tick right after → no duplicate ping (interval claim works).
+    cache_keeper._tick()
+    assert len(pings) == 1
+
+    # Entries outside the keep-alive window are dropped (no more pings).
+    monkeypatch.setattr(
+        cache_keeper.time, "time", lambda: old_now() + 4 * 3600, raising=False
+    )
+    cache_keeper._tick()
+    assert len(pings) == 1
+    cache_keeper.reset_for_tests()
+
+
+def test_cache_keeper_disabled_without_1h_cache(monkeypatch):
+    """touch() is a no-op when the cache TTL is the 5-minute one."""
+    from app.services import cache_keeper
+    from app.config import settings as app_settings
+
+    cache_keeper.reset_for_tests()
+    monkeypatch.setattr(app_settings, "cache_duration_seconds", 300)
+    monkeypatch.setattr(app_settings, "cache_keepalive_hours", 3)
+
+    cache_keeper.touch(999999, "SYSTEM", ["openai/gpt-4o-mini"])
+    assert 999999 not in cache_keeper._entries
+    cache_keeper.reset_for_tests()
