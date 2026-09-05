@@ -253,11 +253,18 @@ def keepalive_pings(
         }
     for p in pings:
         p["title"] = titles.get(p["conversation_id"], f"dialog #{p['conversation_id']}")
+    # Source of truth for "what is warming": the DB flag, restricted to live
+    # (non-deleted) dialogs — stale tombstoned entries never show up here.
+    enabled_rows = db.execute(
+        select(Conversation.id, Conversation.title).where(
+            Conversation.keepalive_enabled.is_(True),
+            Conversation.deleted_at.is_(None),
+        )
+    ).all()
     return {
         "interval_minutes": 45,
         "enabled": [
-            {"conversation_id": cid, "title": titles.get(cid, f"dialog #{cid}")}
-            for cid in cache_keeper.enabled_ids()
+            {"conversation_id": row[0], "title": row[1]} for row in enabled_rows
         ],
         "pings": pings,
     }
