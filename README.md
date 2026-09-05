@@ -227,17 +227,27 @@ curl -X POST http://localhost:8000/api/chat/send \
 ## Security notes
 
 - Change `APP_PASSWORD` to something strong.
+- **HTTPS (TLS) is enabled out of the box**: run `./scripts/gen-certs.sh <server-ip>`
+  once — it creates a private CA + server certificate in `./certs/` and the app
+  is then served over **https://<server-ip>:8443** (the password, keys and
+  dialogs are encrypted in transit; uvicorn terminates TLS natively).
+  The browser shows a one-time warning for the self-signed certificate —
+  accept it (normal for IP-only servers without a domain).
+- **The Android app pins the CA** (`res/raw/batch_chat_ca.pem` + network
+  security config): a man-in-the-middle with any other certificate is refused
+  by Android itself. Copy the new `ca.crt` into the app and rebuild after
+  regenerating certs.
+- Port `:8000` (plain HTTP) is kept only for migration; once all devices use
+  `:8443`, remove the `"8000:8000"` mapping in `docker-compose.yml` and open
+  only 8443 in the VPS firewall.
 - The login endpoint has brute-force protection: after 5 failed attempts the
   client IP is locked out (30s, doubling up to 15 minutes).
 - The API key never leaves the server.
-- For production, put the app behind a reverse proxy with HTTPS (Caddy is the easiest:
-  it auto-provisions Let's Encrypt certificates).
 - Token-based auth: log in once, the browser stores the token in `localStorage`.
 - CORS is configurable via `CORS_ORIGINS` (comma-separated); default `*` keeps
   phone/PC clients working over LAN IPs — tighten it when behind a real domain.
-- The web UI and API are served over plain HTTP on :8000 by default; sync
-  traffic (dialogs, keys) is only as private as the network between you and
-  the VPS, so the reverse proxy + HTTPS is strongly recommended.
+- With a real domain, swap the self-signed cert for Let's Encrypt (Caddy) and
+  drop the manual pinning.
 
 ## Project layout
 
