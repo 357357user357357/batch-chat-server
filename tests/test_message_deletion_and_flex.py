@@ -400,6 +400,36 @@ def test_cache_keeper_pings_due_conversations(monkeypatch):
     cache_keeper.reset_for_tests()
 
 
+def test_cache_keeper_pings_flex_models_with_suffix(monkeypatch):
+    """:flex dialogs get keep-alive too — the ping must keep the ":flex"
+    suffix so chat_completion re-applies service_tier="flex" and hits the
+    same (flex-tier) cache instead of falling back to a different prefix."""
+    from app.services import cache_keeper
+    from app.config import settings as app_settings
+
+    cache_keeper.reset_for_tests()
+    monkeypatch.setattr(app_settings, "cache_keepalive_hours", 3)
+    monkeypatch.setattr(app_settings, "cache_duration_seconds", 3600)
+
+    headers = auth_headers()
+    conv = client.post("/api/conversations", headers=headers, json={"title": "flex keeper"}).json()
+
+    flex_model = "openai/gpt-6-astra:flex"
+    pings: list[dict] = []
+
+    def fake_completion(model, messages, temperature=None, max_tokens=None):
+        pings.append({"model": model, "messages": messages})
+        return "."
+
+    monkeypatch.setattr("app.services.openrouter.chat_completion", fake_completion)
+    cache_keeper.touch(conv["id"], "FLEX SYSTEM", [flex_model])
+    cache_keeper._tick()
+
+    assert len(pings) == 1
+    assert pings[0]["model"] == flex_model  # suffix preserved → same flex tier
+    cache_keeper.reset_for_tests()
+
+
 def test_cache_keeper_disabled_without_1h_cache(monkeypatch):
     """touch() is a no-op when the cache TTL is the 5-minute one."""
     from app.services import cache_keeper
