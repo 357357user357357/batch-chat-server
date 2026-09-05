@@ -55,6 +55,24 @@ def split_model_variant(model: str) -> tuple[str, str | None]:
     return stripped, None
 
 
+def is_reasoning_unsupported_error(status_code: int, message: str) -> bool:
+    """OpenRouter rejected the reasoning param for this model (e.g. astra:
+    "Reasoning is mandatory for this endpoint and cannot be disabled")."""
+    if status_code != 400:
+        return False
+    t = (message or "").lower()
+    return "reasoning" in t and (
+        "cannot be disabled" in t
+        or "not supported" in t
+        or "mandatory" in t
+        or "does not support" in t
+    )
+
+
+# Backwards-compatible alias used by the chat send path.
+_is_reasoning_unsupported_error = is_reasoning_unsupported_error
+
+
 def is_flex_unsupported_error(status_code: int, message: str) -> bool:
     """True when the provider rejected the flex processing tier itself (the
     model exists but not via flex) — callers then fall back to a standard
@@ -175,14 +193,25 @@ def chat_completion(
                         headers=_headers(),
                         json=payload,
                     )
-                    if resp.status_code >= 400:
-                        raise OpenRouterError(
-                            f"OpenRouter error (HTTP {resp.status_code}): "
-                            f"{_safe_error(resp)}"
-                        )
-                else:
+                    error_text = _safe_error(resp) if resp.status_code >= 400 else ""
+                # Reasoning param rejected (e.g. "Reasoning is mandatory for
+                # this endpoint and cannot be disabled" on reasoning-only
+                # models) → retry once without it (model default applies).
+                if (
+                    resp.status_code >= 400
+                    and "reasoning" in payload
+                    and _is_reasoning_unsupported_error(resp.status_code, error_text)
+                ):
+                    payload.pop("reasoning", None)
+                    resp = client.post(
+                        f"{settings.openrouter_base_url}/chat/completions",
+                        headers=_headers(),
+                        json=payload,
+                    )
+                if resp.status_code >= 400:
                     raise OpenRouterError(
-                        f"OpenRouter error (HTTP {resp.status_code}): {error_text}"
+                        f"OpenRouter error (HTTP {resp.status_code}): "
+                        f"{_safe_error(resp)}"
                     )
             data = resp.json()
     except httpx.HTTPError as exc:

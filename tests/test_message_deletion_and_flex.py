@@ -538,11 +538,14 @@ def test_push_never_resurrects_deleted_dialogs(monkeypatch):
 
 def test_reasoning_effort_reaches_openrouter_payload(monkeypatch):
     """Reasoning effort is forwarded as OpenRouter's unified reasoning param:
-    'none' → {"enabled": false}; levels → {"effort": level}; default → absent."""
+    'none' → {"enabled": false}; levels → {"effort": level}; default → absent.
+    If the model rejects reasoning (mandatory/no support), the request is
+    retried once WITHOUT the param (model default applies)."""
     calls = []
 
     class FakeResponse:
-        status_code = 200
+        def __init__(self, status_code=200):
+            self.status_code = status_code
 
         def json(self):
             return {"choices": [{"message": {"content": "ok"}}]}
@@ -559,22 +562,32 @@ def test_reasoning_effort_reaches_openrouter_payload(monkeypatch):
 
         def post(self, url, headers=None, json=None):
             calls.append(dict(json))
-            return FakeResponse()
+            # Reject "none" the way reasoning-mandatory models (astra) do.
+            if json.get("reasoning") == {"enabled": False}:
+                return FakeResponse(400)
+            return FakeResponse(200)
+
+    def _safe_error(resp):
+        return "Reasoning is mandatory for this endpoint and cannot be disabled."
 
     import httpx
 
     monkeypatch.setattr(httpx, "Client", FakeClient)
+    monkeypatch.setattr("app.services.openrouter._safe_error", _safe_error)
 
     chat_completion("openai/gpt-6-astra", [{"role": "user", "content": "hi"}])
     assert "reasoning" not in calls[-1]  # default: nothing sent
 
     chat_completion("openai/gpt-6-astra", [{"role": "user", "content": "hi"}],
-                    reasoning_effort="none")
-    assert calls[-1]["reasoning"] == {"enabled": False}
-
-    chat_completion("openai/gpt-6-astra", [{"role": "user", "content": "hi"}],
                     reasoning_effort="xhigh")
-    assert calls[-1]["reasoning"] == {"effort": "xhigh"}
+    assert calls[-1]["reasoning"] == {"effort": "xhigh"}  # accepted as-is
+
+    answer = chat_completion("openai/gpt-6-astra",
+                             [{"role": "user", "content": "hi"}],
+                             reasoning_effort="none")
+    assert answer == "ok"
+    assert calls[-2]["reasoning"] == {"enabled": False}   # first attempt
+    assert "reasoning" not in calls[-1]                   # fallback retry
 
 
 def test_chat_send_rejects_invalid_reasoning_effort():
