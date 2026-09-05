@@ -50,6 +50,8 @@ const els = {
   addModelBtn: $("#add-model-btn"),
   importBtn: $("#import-btn"),
   importModal: $("#import-modal"),
+  menuBtn: $("#menu-btn"),
+  menuPopover: $("#menu-popover"),
   importClose: $("#import-close"),
   importTextarea: $("#import-textarea"),
   importStatus: $("#import-status"),
@@ -725,6 +727,27 @@ els.chatInput.addEventListener("keydown", (e) => {
     els.chatForm.requestSubmit();
   }
 });
+
+// ---------------------------------------------------------------
+// Footer menu (☰) — reveals Import / Settings / Log out
+// ---------------------------------------------------------------
+function closeFooterMenu() {
+  els.menuPopover.classList.add("hidden");
+}
+
+els.menuBtn.addEventListener("click", (e) => {
+  e.stopPropagation();
+  els.menuPopover.classList.toggle("hidden");
+});
+
+els.menuPopover.addEventListener("click", (e) => {
+  // Keep the popover open while hovering/clicking inside; each button's own
+  // handler runs, then the menu closes with the modal it opens.
+  if (e.target.closest("button")) closeFooterMenu();
+  e.stopPropagation();
+});
+
+document.addEventListener("click", closeFooterMenu);
 
 // ---------------------------------------------------------------
 // Import from the Android app

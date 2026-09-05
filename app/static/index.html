@@ -34,9 +34,14 @@
       <div class="sidebar-footer">
         <span id="server-status" class="status-dot" title="Server status"></span>
         <span class="footer-actions">
-          <button id="import-btn" class="btn btn-ghost btn-small" title="Import from the Android app">⬆ Import</button>
-          <button id="settings-btn" class="btn btn-ghost btn-small" title="Set provider API keys">⚙ Settings</button>
-          <button id="logout-btn" class="btn btn-ghost btn-small">Log out</button>
+          <span id="footer-menu" class="footer-menu">
+            <button id="menu-btn" class="btn btn-ghost btn-small" title="Import / Settings / Log out">☰ Menu</button>
+            <span id="menu-popover" class="menu-popover hidden">
+              <button id="import-btn" class="btn btn-ghost btn-small" title="Import from the Android app">⬆ Import</button>
+              <button id="settings-btn" class="btn btn-ghost btn-small" title="Set provider API keys">⚙ Settings</button>
+              <button id="logout-btn" class="btn btn-ghost btn-small">⎋ Log out</button>
+            </span>
+          </span>
         </span>
       </div>
     </aside>
@@ -50,7 +55,7 @@
             <button type="button" id="mode-flex-btn" class="mode-btn" title="Flex chat — one model via the cheaper Flex processing tier (slower; auto-falls back to standard if unsupported)">🧊 Flex</button>
             <button type="button" id="mode-batch-btn" class="mode-btn" title="Batch chat — all selected models answer in parallel">⚡ Batch</button>
           </div>
-          <button id="batch-btn" class="btn btn-ghost btn-small" title="JSONL batch jobs (async, ~50% cost, like GCP/AWS) — click for statuses">🧾 JSONL<span id="batch-badge" class="batch-badge hidden" title="Active batch jobs"></span></button>
+          <button id="batch-btn" class="btn btn-ghost btn-small" title="Batch job statuses (async JSONL jobs, ~50% cost)">📊 Status<span id="batch-badge" class="batch-badge hidden" title="Active batch jobs"></span></button>
           <div class="model-picker" id="model-picker">
           <button id="model-picker-btn" class="btn btn-ghost btn-small" title="Choose models">Models</button>
           <div id="model-dropdown" class="model-dropdown hidden">
