@@ -3,8 +3,9 @@
 # The CA cert (ca.crt) is embedded into the Android app for cert pinning;
 # ca.key and server.key must NEVER leave the server.
 set -euo pipefail
-cd "$(dirname "$0")/../certs"
-mkdir -p .
+cd "$(dirname "$0")/.."
+mkdir -p certs
+cd certs
 IP="${1:?Usage: gen-certs.sh <server-ip> [extra SAN...]}"
 SAN="IP:${IP}"
 shift || true
