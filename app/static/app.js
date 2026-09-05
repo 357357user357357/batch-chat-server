@@ -586,10 +586,12 @@ async function deleteMessage(msg, node) {
 }
 
 /**
- * Render markdown + LaTeX ($...$, $$...$$, \(...\), \[...\]) safely.
- * Math is extracted before markdown parsing (so underscores etc. inside
- * formulas aren't mangled by the markdown parser), rendered via KaTeX, and
- * the resulting HTML is sanitized before insertion.
+ * Render markdown + LaTeX safely — including BARE math with no delimiters.
+ * Pipeline: (1) code fences/spans are stashed so nothing inside them is
+ * touched, (2) explicit math ($…$, $$…$$, \(…\), \[…\]) is stashed,
+ * (3) bare LaTeX / ASCII powers (X**2, \pi, x_i^2) are auto-wrapped in $…$
+ * (port of the phone app's autoDelimitRawLatex), (4) markdown runs, (5) all
+ * stashed fragments are restored (math via KaTeX) after sanitizing.
  */
 function renderRichText(container, raw) {
   if (typeof marked === "undefined" || typeof DOMPurify === "undefined") {
@@ -597,19 +599,32 @@ function renderRichText(container, raw) {
     return;
   }
 
+  const escapeHtml = (s) =>
+    s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+
+  // 1. Code first: fences and inline spans must not be touched by math
+  //    wrapping or markdown emphasis. Stored as ready HTML.
+  const codeStore = [];
+  let text = raw
+    .replace(/```[\s\S]*?```/g, (m) =>
+      `@@BCSTASH${codeStore.push(`<pre><code>${escapeHtml(m.slice(3, -3))}</code></pre>`) - 1}@@`)
+    .replace(/`[^`\n]+`/g, (m) =>
+      `@@BCSTASH${codeStore.push(`<code>${escapeHtml(m.slice(1, -1))}</code>`) - 1}@@`);
+
+  // 2. Explicit math delimiters.
   const mathStore = [];
-  // Plain-ASCII placeholder: NUL/control-char markers get replaced with U+FFFD
-  // by the HTML parser during innerHTML assignment, so those don't survive.
-  const stash = (expr, displayMode) => {
+  const stashMath = (expr, displayMode) => {
     const idx = mathStore.push({ expr, displayMode }) - 1;
     return `@@MATHPLACEHOLDER${idx}@@`;
   };
+  text = text
+    .replace(/\$\$([\s\S]+?)\$\$/g, (_, expr) => stashMath(expr, true))
+    .replace(/\\\[([\s\S]+?)\\\]/g, (_, expr) => stashMath(expr, true))
+    .replace(/\\\(([\s\S]+?)\\\)/g, (_, expr) => stashMath(expr, false))
+    .replace(/(^|[^\\$])\$([^\n$]+?)\$/g, (_, before, expr) => `${before}${stashMath(expr, false)}`);
 
-  let text = raw
-    .replace(/\$\$([\s\S]+?)\$\$/g, (_, expr) => stash(expr, true))
-    .replace(/\\\[([\s\S]+?)\\\]/g, (_, expr) => stash(expr, true))
-    .replace(/\\\(([\s\S]+?)\\\)/g, (_, expr) => stash(expr, false))
-    .replace(/(^|[^\\$])\$([^\n$]+?)\$/g, (_, before, expr) => `${before}${stash(expr, false)}`);
+  // 3. Bare LaTeX without any delimiters → wrap in $…$ / $$…$$.
+  text = autoDelimitRawLatex(text);
 
   let html = DOMPurify.sanitize(marked.parse(text, { breaks: true }));
 
@@ -622,8 +637,154 @@ function renderRichText(container, raw) {
       return expr;
     }
   });
+  html = html.replace(/@@BCSTASH(\d+)@@/g, (_, i) => codeStore[Number(i)]);
 
   container.innerHTML = html;
+}
+
+// ---------------------------------------------------------------
+// Bare-LaTeX auto-delimiting — JS port of the phone app's
+// autoDelimitRawLatex. Wraps bare LaTeX commands/symbols and
+// sub/superscripts in $…$ ($$…$$ for \begin…\end blocks), converts
+// ASCII powers (X**2 → X^{2}), and leaves already-delimited math,
+// money amounts, identifiers and code spans untouched.
+// ---------------------------------------------------------------
+const BARE_SYMBOLS = new Set([
+  "frac", "dfrac", "tfrac", "cfrac", "sqrt",
+  "sum", "int", "prod", "lim", "inf", "sup", "max", "min",
+  "infty", "partial", "nabla", "ell", "hbar", "Re", "Im",
+  "cdot", "times", "pm", "mp", "div",
+  "leq", "geq", "neq", "approx", "equiv", "sim", "propto",
+  "subset", "subseteq", "supset", "supseteq", "cup", "cap",
+  "forall", "exists", "nexists", "emptyset", "varnothing",
+  "rightarrow", "leftarrow", "Rightarrow", "Leftarrow",
+  "Leftrightarrow", "to", "mapsto", "implies", "iff",
+  "alpha", "beta", "gamma", "delta", "epsilon", "varepsilon",
+  "zeta", "eta", "theta", "vartheta", "iota", "kappa", "lambda",
+  "mu", "nu", "xi", "rho", "varrho", "sigma", "tau", "upsilon",
+  "phi", "varphi", "chi", "psi", "omega",
+  "pi", "varpi", "varsigma", "imath", "jmath",
+  "oplus", "ominus", "otimes", "oslash", "odot",
+  "vee", "wedge", "neg", "top", "bot", "star", "ast",
+  "lceil", "rceil", "lfloor", "rfloor", "langle", "rangle",
+  "perp", "parallel", "mid",
+  "arcsin", "arccos", "arctan", "sinh", "cosh", "tanh", "coth",
+  "deg", "bmod", "pmod",
+  "Gamma", "Delta", "Theta", "Lambda", "Xi", "Pi", "Sigma",
+  "Upsilon", "Phi", "Psi", "Omega",
+  "sin", "cos", "tan", "cot", "sec", "csc",
+  "log", "ln", "exp", "det", "gcd", "arg", "dim", "ker", "hom",
+  "left", "right",
+  "text", "mathbb", "mathrm", "mathbf", "mathit", "mathcal",
+  "mathfrak", "mathsf", "mathtt", "operatorname",
+  "displaystyle", "textstyle", "scriptstyle",
+  "hat", "bar", "vec", "dot", "ddot", "tilde",
+  "overline", "underline", "widehat", "widetilde",
+  "binom", "cdots", "ldots", "vdots", "ddots", "dots", "dotsc",
+  "quad", "qquad", "angle", "degree", "prime", "circ",
+]);
+
+const WEB_MATH_SEGMENT_PATTERN =
+  /\$\$[\s\S]{1,4000}?\$\$|\\\[[\s\S]{1,4000}?\\\]|\\\([\s\S]{1,400}?\\\)|\$[^\s$](?:[^$]{0,398}[^\s$])?\$/g;
+const WEB_MACRO_PATTERN =
+  /\\[a-zA-Z]+\*?(?:\{(?:[^{}]|\{[^{}]*\})*\})*(?:[_^](?:\{(?:[^{}]|\{[^{}]*\})*\}|\\[a-zA-Z]+|[^\s{}]))*/;
+const WEB_BARE_EXPONENT_PATTERN =
+  /(?:[A-Za-z0-9\]]+|\([^()]*\))(?:[_^](?:\{[^{}]+\}|\\[a-zA-Z]+|-?[A-Za-z0-9]+)){1,2}/;
+const WEB_ENVIRONMENT_PATTERN = /\\begin\{[^{}]*\}[\s\S]*?\\end\{[^{}]*\}/g;
+const WEB_ASCII_POWER_PATTERN =
+  /(^|[^A-Za-z0-9_*\\])((?:[A-Za-z0-9\]]+|\([^()\n]+\))\*\*(?:[A-Za-z0-9]+|\([^()\n]+\)))/g;
+const WEB_FRAGMENT_PATTERN = new RegExp(
+  `${WEB_MACRO_PATTERN.source}|${WEB_BARE_EXPONENT_PATTERN.source}`, "g");
+
+function webCommandName(source) {
+  const match = /^\\([a-zA-Z]+)/.exec(source);
+  return match ? match[1] : "";
+}
+
+function webIsConnector(gap) {
+  return /^[\s+\-*/=<>()[\]{},.:;^_|]*$/.test(gap);
+}
+
+function webFindMathAtoms(text) {
+  const atoms = [];
+  for (const match of text.matchAll(WEB_ENVIRONMENT_PATTERN)) {
+    atoms.push({ start: match.index, end: match.index + match[0].length, display: true });
+  }
+  // ASCII powers (X**2 → X^{2}) as pre-converted atoms.
+  for (const match of text.matchAll(WEB_ASCII_POWER_PATTERN)) {
+    const start = match.index + match[1].length;
+    const rawMatch = match[2];
+    atoms.push({
+      start,
+      end: start + rawMatch.length,
+      display: false,
+      value: rawMatch.replace(/\*\*((?:[A-Za-z0-9]+|\([^()]+\)))/g, "^{$1}"),
+    });
+  }
+  for (const match of text.matchAll(WEB_FRAGMENT_PATTERN)) {
+    if (atoms.some((atom) => match.index >= atom.start && match.index < atom.end)) continue;
+    const value = match[0];
+    if (value[0] === "\\") {
+      const bare = !/[{}_^]/.test(value);
+      if (bare && !BARE_SYMBOLS.has(webCommandName(value))) continue;
+    } else {
+      const prev = text[match.index - 1];
+      if (prev && /[A-Za-z0-9_]/.test(prev)) continue;
+      if (value.includes("_")) {
+        const base = /^[A-Za-z0-9\]]+/.exec(value)?.[0] ?? "";
+        const script = /_(?:\{[^{}]+\}|\\[a-zA-Z]+|-?[A-Za-z0-9]+)/.exec(value)?.[0] ?? "";
+        if (base.length > 1 && /[A-Za-z]/.test(base) && /^[A-Za-z]/.test(script.slice(1))) continue;
+      }
+    }
+    atoms.push({ start: match.index, end: match.index + value.length, display: false });
+  }
+  return atoms.sort((a, b) => a.start - b.start);
+}
+
+function webMergeAtoms(atoms, text) {
+  const runs = [];
+  for (const atom of atoms) {
+    const last = runs[runs.length - 1];
+    if (last && !last.display && !atom.display && webIsConnector(text.slice(last.end, atom.start))) {
+      const gap = text.slice(last.end, atom.start);
+      if (last.value !== undefined || atom.value !== undefined) {
+        last.value =
+          (last.value ?? text.slice(last.start, last.end)) + gap +
+          (atom.value ?? text.slice(atom.start, atom.end));
+      }
+      last.end = atom.end;
+    } else {
+      runs.push({ ...atom });
+    }
+  }
+  return runs;
+}
+
+function autoDelimitRawLatex(text) {
+  // An odd number of $$ means truncated text mid-formula — leave as-is.
+  const displayDelimiters = (text.match(/\$\$/g) || []).length;
+  if (displayDelimiters % 2 !== 0) return text;
+
+  const protectedRanges = [];
+  for (const match of text.matchAll(WEB_MATH_SEGMENT_PATTERN)) {
+    protectedRanges.push({ start: match.index, end: match.index + match[0].length });
+  }
+
+  const atoms = webFindMathAtoms(text).filter(
+    (atom) => !protectedRanges.some((r) => atom.start >= r.start && atom.start < r.end)
+  );
+  if (!atoms.length) return text;
+
+  const runs = webMergeAtoms(atoms, text);
+  let out = "";
+  let lastIndex = 0;
+  for (const run of runs) {
+    out += text.slice(lastIndex, run.start);
+    const content = run.value ?? text.slice(run.start, run.end);
+    out += run.display ? `$$${content}$$` : `$${content}$`;
+    lastIndex = run.end;
+  }
+  return out + text.slice(lastIndex);
 }
 
 /** Copy raw source text to the clipboard (works over plain HTTP too, unlike
