@@ -12,8 +12,11 @@ const state = {
   currentConversationId: null,
   defaultModels: [],
   selectedModels: JSON.parse(localStorage.getItem("bc_models") || "null"),
-  // "live" = one model answers instantly; "batch" = every selected model answers in parallel
-  chatMode: localStorage.getItem("bc_chat_mode") === "batch" ? "batch" : "live",
+  // "live" = one model, standard tier; "flex" = one model via the cheaper
+  // Flex tier (":flex" appended on send); "batch" = all selected models in parallel
+  chatMode: ["live", "flex", "batch"].includes(localStorage.getItem("bc_chat_mode"))
+    ? localStorage.getItem("bc_chat_mode")
+    : "live",
   liveModel: localStorage.getItem("bc_live_model") || null,
   sending: false,
   batches: [],
@@ -39,6 +42,7 @@ const els = {
   modelPickerBtn: $("#model-picker-btn"),
   modelDropdownHint: $("#model-dropdown-hint"),
   modeLiveBtn: $("#mode-live-btn"),
+  modeFlexBtn: $("#mode-flex-btn"),
   modeBatchBtn: $("#mode-batch-btn"),
   modelDropdown: $("#model-dropdown"),
   modelCheckboxes: $("#model-checkboxes"),
@@ -202,14 +206,14 @@ async function loadModels() {
 
     // One-time cleanup: the default model list was trimmed — drop saved
     // selections that no longer exist (custom models added afterwards stay).
-    if (!localStorage.getItem("bc_models_pruned_v2")) {
+    if (!localStorage.getItem("bc_models_pruned_v3")) {
       const known = new Set(state.defaultModels);
       state.selectedModels = (state.selectedModels || []).filter((m) => known.has(m));
       if (!state.selectedModels.length) state.selectedModels = [batchChatDefault()];
       if (!state.liveModel || !known.has(state.liveModel) || state.liveModel.endsWith(":batch")) {
         state.liveModel = data.default_live_model || state.defaultModels.find((m) => !m.includes(":batch")) || state.defaultModels[0] || null;
       }
-      localStorage.setItem("bc_models_pruned_v2", "1");
+      localStorage.setItem("bc_models_pruned_v3", "1");
       saveModels();
       saveChatMode();
     }
@@ -235,7 +239,8 @@ function saveModels() {
 }
 
 // ---------------------------------------------------------------
-// Live vs Batch chat mode (mirrors the Android app's two tabs)
+// Live / Flex / Batch chat mode (mirrors the Android app's tabs;
+// Flex = live chat via the cheaper Flex processing tier)
 // ---------------------------------------------------------------
 function saveChatMode() {
   localStorage.setItem("bc_chat_mode", state.chatMode);
@@ -244,16 +249,26 @@ function saveChatMode() {
 
 function applyChatMode() {
   els.modeLiveBtn.classList.toggle("active", state.chatMode === "live");
+  els.modeFlexBtn.classList.toggle("active", state.chatMode === "flex");
   els.modeBatchBtn.classList.toggle("active", state.chatMode === "batch");
-  els.modelDropdownHint.textContent = state.chatMode === "live"
-    ? "Answer with this model (Live):"
-    : "Send each message to these models in parallel:";
-  els.modelPickerBtn.textContent = state.chatMode === "live" ? "Model" : "Models";
+  els.modelDropdownHint.textContent =
+    state.chatMode === "live"
+      ? "Answer with this model (Live):"
+      : state.chatMode === "flex"
+        ? "Answer with this model via the cheaper Flex tier:"
+        : "Send each message to these models in parallel:";
+  els.modelPickerBtn.textContent = state.chatMode === "batch" ? "Models" : "Model";
   renderModelCheckboxes();
 }
 
 els.modeLiveBtn.addEventListener("click", () => {
   state.chatMode = "live";
+  saveChatMode();
+  applyChatMode();
+});
+
+els.modeFlexBtn.addEventListener("click", () => {
+  state.chatMode = "flex";
   saveChatMode();
   applyChatMode();
 });
@@ -270,8 +285,8 @@ function renderModelCheckboxes() {
     const label = document.createElement("label");
     label.className = "model-check";
     const cb = document.createElement("input");
-    if (state.chatMode === "live") {
-      // Live chat: single choice, like the phone app's chat tab.
+    if (state.chatMode !== "batch") {
+      // Live & Flex chat: single choice, like the phone app's chat tab.
       // ":batch" ids are async-only — they can't answer a live request.
       if (model.endsWith(":batch")) return;
       cb.type = "radio";
@@ -314,7 +329,7 @@ els.addModelBtn.addEventListener("click", () => {
   const custom = els.customModelInput.value.trim();
   if (!custom) return;
   if (!state.defaultModels.includes(custom)) state.defaultModels.push(custom);
-  if (state.chatMode === "live") {
+  if (state.chatMode !== "batch") {
     state.liveModel = custom;
     saveChatMode();
   } else {
@@ -646,10 +661,14 @@ els.chatForm.addEventListener("submit", async (e) => {
     || (state.selectedModels || [])[0]
     || state.defaultModels[0]
     || null;
-  // Live chat → one model; batch chat → all selected models in parallel.
-  const models = state.chatMode === "live"
-    ? [liveModel]
-    : (state.selectedModels || []);
+  // Batch chat → all selected models in parallel; Live/Flex → one model
+  // (Flex mode appends the ":flex" processing-tier suffix, the server turns
+  // it into service_tier="flex" and falls back to standard if unsupported).
+  const models = state.chatMode === "batch"
+    ? (state.selectedModels || [])
+    : [liveModel && !liveModel.endsWith(":flex") && state.chatMode === "flex"
+        ? `${liveModel}:flex`
+        : liveModel];
   if (!models.length || !models[0]) {
     alert(state.chatMode === "live"
       ? "Pick a model in the Model dropdown first."

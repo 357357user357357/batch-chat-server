@@ -28,11 +28,9 @@ DEFAULT_MODELS = [
     "z-ai/glm-5.3",
     "z-ai/glm-5.3-flash",
     "openai/gpt-6-astra",
-    "openai/gpt-6-astra:flex",
     "openai/gpt-6-astra-pro",
     "~deepseek/deepseek-v4-flash-latest",
     "anthropic/claude-fable-5.1",
-    "anthropic/claude-fable-5.1:batch",
 ]
 
 # Defaults per mode: DeepSeek v4 flash (latest) answers live chats; Fable 5.1

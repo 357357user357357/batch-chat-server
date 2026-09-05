@@ -46,8 +46,9 @@
       <header class="chat-header">
         <h3 id="chat-title">Select a conversation</h3>
         <div class="chat-header-controls">
-          <div class="mode-toggle" id="mode-toggle" title="Live: one model answers instantly. Batch: every selected model answers in parallel.">
+          <div class="mode-toggle" id="mode-toggle" title="Live: one model answers instantly. Flex: same, via the cheaper Flex tier (slower). Batch: every selected model answers in parallel.">
             <button type="button" id="mode-live-btn" class="mode-btn" title="Live chat — one model answers right away">💬 Live</button>
+            <button type="button" id="mode-flex-btn" class="mode-btn" title="Flex chat — one model via the cheaper Flex processing tier (slower; auto-falls back to standard if unsupported)">🧊 Flex</button>
             <button type="button" id="mode-batch-btn" class="mode-btn" title="Batch chat — all selected models answer in parallel">⚡ Batch</button>
           </div>
           <div class="model-picker" id="model-picker">
