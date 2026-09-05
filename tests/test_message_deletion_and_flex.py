@@ -160,8 +160,8 @@ def test_phone_push_does_not_resurrect_deleted_message():
 # ---------------------------------------------------------------------------
 
 def test_split_model_variant():
-    assert split_model_variant("openai/astra:flex") == ("openai/astra", "flex")
-    assert split_model_variant("openai/astra") == ("openai/astra", None)
+    assert split_model_variant("openai/gpt-6-astra:flex") == ("openai/gpt-6-astra", "flex")
+    assert split_model_variant("openai/gpt-6-astra") == ("openai/gpt-6-astra", None)
     # ":batch" is part of the OpenRouter model id, kept intact
     assert split_model_variant("anthropic/claude-fable-5.1:batch") == (
         "anthropic/claude-fable-5.1:batch",
@@ -172,7 +172,7 @@ def test_split_model_variant():
 def test_flex_unsupported_error_detection():
     assert is_flex_unsupported_error(400, "service_tier flex is not available for this model")
     assert is_flex_unsupported_error(400, "Flex processing is not supported")
-    assert not is_flex_unsupported_error(400, "Unknown model: openai/astra")
+    assert not is_flex_unsupported_error(400, "Unknown model: openai/gpt-6-astra")
     assert not is_flex_unsupported_error(404, "flex")
 
 
@@ -219,11 +219,11 @@ def test_chat_completion_falls_back_when_flex_rejected(monkeypatch):
 
     monkeypatch.setattr(httpx, "Client", FakeClient)
 
-    answer = chat_completion("openai/astra:flex", [{"role": "user", "content": "hi"}])
+    answer = chat_completion("openai/gpt-6-astra:flex", [{"role": "user", "content": "hi"}])
     assert answer == "hello from astra"
     assert len(calls) == 2
     assert calls[0]["service_tier"] == "flex"
-    assert calls[0]["model"] == "openai/astra"
+    assert calls[0]["model"] == "openai/gpt-6-astra"
     assert "service_tier" not in calls[1]
 
 
@@ -255,7 +255,7 @@ def test_chat_completion_sends_base_model_for_plain_models(monkeypatch):
 
     monkeypatch.setattr(httpx, "Client", FakeClient)
 
-    answer = chat_completion("openai/astra", [{"role": "user", "content": "hi"}])
+    answer = chat_completion("openai/gpt-6-astra", [{"role": "user", "content": "hi"}])
     assert answer == "ok"
     assert len(calls) == 1
     assert "service_tier" not in calls[0]

@@ -28,7 +28,7 @@ You asked which tools to use — here is the reasoning behind what's in this rep
 - ⚙️ **Settings modal** in the web UI to set OpenRouter/Vertex/Bedrock credentials — saved to the server DB and applied immediately, no SSH or restart needed
 - 🗑️ **Delete any question/answer inside a dialogue** from the web — the text stays archived in the server DB, and every synced device (including the phone) drops it on the next sync
 - 🔁 **Key sync** — OpenRouter/Tavily keys are unified between phone and server (gaps filled both ways, server-first)
-- ⚡ **Flex processing tier** — append `:flex` to any model (e.g. `openai/astra:flex`) for the cheaper `service_tier="flex"` processing; if the provider doesn't serve flex for that model, the server falls back to the standard tier automatically (or run it through the Batch API)
+- ⚡ **Flex processing tier** — append `:flex` to any model (e.g. `openai/gpt-6-astra:flex`) for the cheaper `service_tier="flex"` processing; if the provider doesn't serve flex for that model, the server falls back to the standard tier automatically (or run it through the Batch API)
 - ⚙️ Pure vanilla JS UI, works on mobile and desktop
 
 ## Multiple providers (OpenRouter / Vertex AI / Bedrock)
@@ -41,7 +41,7 @@ your own cloud billing) by prefixing the model name in the "Models" picker
 | Prefix | Example | Needs |
 |---|---|---|
 | *(none)* | `anthropic/claude-sonnet-4.5` | `OPENROUTER_API_KEY` |
-| *(none)* + `:flex` | `openai/astra:flex` — Flex processing tier (`service_tier="flex"`, cheaper/slower); auto-falls-back to standard tier when the provider rejects it | `OPENROUTER_API_KEY` |
+| *(none)* + `:flex` | `openai/gpt-6-astra:flex` — Flex processing tier (`service_tier="flex"`, cheaper/slower); auto-falls-back to standard tier when the provider rejects it | `OPENROUTER_API_KEY` |
 | `vertex:` | `vertex:gemini-2.5-flash`, `vertex:claude-sonnet-4-5@20250929` | `GOOGLE_PROJECT_ID` + service-account key |
 | `bedrock:` | `bedrock:anthropic.claude-3-5-sonnet-20241022-v2:0` | `AWS_ACCESS_KEY_ID` + `AWS_SECRET_ACCESS_KEY` |
 
