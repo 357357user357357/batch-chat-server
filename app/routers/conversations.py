@@ -1,10 +1,11 @@
 import json
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import and_, func, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.database import get_db
+from app.device import device_label
 from app.models import AppSetting, AuthToken, Conversation, Message, MessageTombstone, utcnow
 from app.schemas import (
     ConversationCreate,
@@ -61,10 +62,16 @@ def list_conversations(db: Session = Depends(get_db), _: AuthToken = Depends(get
 @router.post("", response_model=ConversationDetail, status_code=201)
 def create_conversation(
     payload: ConversationCreate,
+    request: Request,
     db: Session = Depends(get_db),
     _: AuthToken = Depends(get_current_token),
 ) -> ConversationDetail:
     conv = Conversation(title=payload.title)
+    # Audit trail: whose record it is (and the web/modification date is
+    # updated_at, maintained automatically).
+    device = device_label(request)
+    conv.origin_device = device
+    conv.modified_by = device
     db.add(conv)
     db.commit()
     db.refresh(conv)
@@ -106,6 +113,7 @@ def rename_conversation(
 @router.delete("/{conversation_id}", status_code=204)
 def delete_conversation(
     conversation_id: int,
+    request: Request,
     db: Session = Depends(get_db),
     _: AuthToken = Depends(get_current_token),
 ) -> None:
@@ -115,6 +123,7 @@ def delete_conversation(
     conv = _fetch_conversation(db, conversation_id)
     conv.deleted_at = utcnow()
     conv.updated_at = utcnow()
+    conv.deleted_by = device_label(request)
     db.commit()
 
 
@@ -122,6 +131,7 @@ def delete_conversation(
 def delete_message(
     conversation_id: int,
     message_id: int,
+    request: Request,
     db: Session = Depends(get_db),
     _: AuthToken = Depends(get_current_token),
 ) -> None:
@@ -143,10 +153,13 @@ def delete_message(
     if msg is None:
         raise HTTPException(status_code=404, detail="Message not found")
 
+    deleted_by = device_label(request)
     msg.deleted_at = utcnow()
+    msg.deleted_by = deleted_by
     db.add(
         MessageTombstone(
-            conversation_id=conv.id, role=msg.role, content=msg.content
+            conversation_id=conv.id, role=msg.role, content=msg.content,
+            deleted_by=deleted_by,
         )
     )
     conv.updated_at = utcnow()

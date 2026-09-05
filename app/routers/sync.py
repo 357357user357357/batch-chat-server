@@ -9,13 +9,19 @@ Sync is keyed by `external_id`, the id a dialog/batch was first created with
 on whichever device made it. Conversations created purely through the web UI
 have no external_id yet; `pull` assigns one (`srv-{id}`) the first time they
 are returned so every dialog eventually has a stable cross-device id.
+
+Every record the master server stores carries an audit trail: WHO created it
+(origin_device), WHO last modified it (modified_by) and WHO deleted it
+(deleted_by) — plus the deletion date. Soft-deleted records (tombstones) are
+never removed from the master DB; they are the archive.
 """
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
 from app.database import get_db
+from app.device import device_label
 from app.models import AuthToken, Conversation, Message, MessageTombstone, utcnow
 from app.schemas import (
     SyncConversationOut,
@@ -64,6 +70,11 @@ def pull(
                 created_at=conv.created_at,
                 updated_at=conv.updated_at,
                 deleted=deleted,
+                # Audit trail: whose record this is / was, and what happened.
+                origin_device=conv.origin_device,
+                modified_by=conv.modified_by,
+                deleted_at=conv.deleted_at if deleted else None,
+                deleted_by=conv.deleted_by if deleted else None,
                 messages=[]
                 if deleted
                 else [
@@ -83,19 +94,22 @@ def pull(
 @router.post("/push", response_model=SyncPushResponse)
 def push(
     payload: SyncPushRequest,
+    request: Request,
     db: Session = Depends(get_db),
     _: AuthToken = Depends(get_current_token),
 ) -> SyncPushResponse:
     created = 0
     updated = 0
     deleted = 0
+    device = device_label(request)
 
     for dialog in payload.dialogs:
         if not dialog.id:
             continue
         messages = dialog_messages(dialog)
         if _upsert(db, external_id=dialog.id, kind="chat", model=dialog.model,
-                    title=title_default(dialog.title, "Imported chat"), messages=messages):
+                    title=title_default(dialog.title, "Imported chat"), messages=messages,
+                    device=device):
             updated += 1
         else:
             created += 1
@@ -105,7 +119,8 @@ def push(
             continue
         messages = batch_messages(item)
         if _upsert(db, external_id=item.id, kind="batch", model=item.model,
-                    title=title_default(item.title, "Batch"), messages=messages):
+                    title=title_default(item.title, "Batch"), messages=messages,
+                    device=device):
             updated += 1
         else:
             created += 1
@@ -124,6 +139,7 @@ def push(
             # `deleted: true` on pull and drop their local copy.
             conv.deleted_at = utcnow()
             conv.updated_at = utcnow()
+            conv.deleted_by = device
             deleted += 1
 
     # Keys a device offered fill gaps on the server (server-first: an existing
@@ -142,6 +158,7 @@ def _upsert(
     model: str | None,
     title: str,
     messages: list[tuple[str, str, str | None]],
+    device: str = "unknown",
 ) -> bool:
     """Create or update a conversation by external_id. Returns True if updated
     (False if newly created).
@@ -150,6 +167,10 @@ def _upsert(
     server (deleted_at set) are never wiped by a device push, and incoming
     messages matching a tombstone (role + exact content) are skipped so a
     deleted question/answer cannot be resurrected by an older device copy.
+
+    Audit trail: a new record gets origin_device (whose record it is), and
+    every device-driven change marks modified_by (last modifier; the date is
+    updated_at).
     """
     conv = db.scalar(
         select(Conversation)
@@ -158,7 +179,8 @@ def _upsert(
     )
     is_new = conv is None
     if is_new:
-        conv = Conversation(external_id=external_id, kind=kind, model=model, title=title)
+        conv = Conversation(external_id=external_id, kind=kind, model=model, title=title,
+                            origin_device=device, modified_by=device)
         db.add(conv)
         db.flush()
         tombstones = set()
@@ -167,6 +189,7 @@ def _upsert(
         conv.model = model or conv.model
         conv.deleted_at = None
         conv.updated_at = utcnow()
+        conv.modified_by = device
         tombstones = set(
             db.execute(
                 select(MessageTombstone.role, MessageTombstone.content).where(

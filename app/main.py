@@ -38,11 +38,25 @@ def _run_migrations() -> None:
         if "deleted_at" not in existing:
             conn.execute(text("ALTER TABLE conversations ADD COLUMN deleted_at DATETIME"))
 
+        if "keepalive_enabled" not in existing:
+            conn.execute(text("ALTER TABLE conversations ADD COLUMN keepalive_enabled BOOLEAN DEFAULT 0"))
+        # Audit-trail columns: whose record it was / who modified / who deleted.
+        if "origin_device" not in existing:
+            conn.execute(text("ALTER TABLE conversations ADD COLUMN origin_device VARCHAR(64)"))
+        if "modified_by" not in existing:
+            conn.execute(text("ALTER TABLE conversations ADD COLUMN modified_by VARCHAR(64)"))
+        if "deleted_by" not in existing:
+            conn.execute(text("ALTER TABLE conversations ADD COLUMN deleted_by VARCHAR(64)"))
+
         msg_existing = {col["name"] for col in inspector.get_columns("messages")}
         if "deleted_at" not in msg_existing:
             conn.execute(text("ALTER TABLE messages ADD COLUMN deleted_at DATETIME"))
-        if "keepalive_enabled" not in existing:
-            conn.execute(text("ALTER TABLE conversations ADD COLUMN keepalive_enabled BOOLEAN DEFAULT 0"))
+        if "deleted_by" not in msg_existing:
+            conn.execute(text("ALTER TABLE messages ADD COLUMN deleted_by VARCHAR(64)"))
+        if inspector.has_table("message_tombstones"):
+            tomb_existing = {col["name"] for col in inspector.get_columns("message_tombstones")}
+            if "deleted_by" not in tomb_existing:
+                conn.execute(text("ALTER TABLE message_tombstones ADD COLUMN deleted_by VARCHAR(64)"))
 
 
 Base.metadata.create_all(bind=engine)

@@ -47,6 +47,12 @@ class Conversation(Base):
     # Soft-delete tombstone: kept (instead of a hard delete) so other devices
     # can be told "this dialog was deleted" the next time they sync.
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
+    # Audit trail (master-server archive): WHICH device created this record,
+    # which one last modified it, and which one deleted it. Devices identify
+    # themselves via the X-Device-Name header (fallback: User-Agent).
+    origin_device: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    modified_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    deleted_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
     # Prompt-cache keep-alive toggle (🔥 Cache button in the web UI): when on,
     # the keeper sends near-empty pings for this dialog's cached prefix.
     keepalive_enabled: Mapped[bool] = mapped_column(default=False)
@@ -73,6 +79,8 @@ class Message(Base):
     # stays archived in the DB, but the message no longer shows up in the
     # dialog, in sync pulls, or on other devices.
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    # Which device deleted this Q/A (audit trail on the master server).
+    deleted_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
     conversation: Mapped["Conversation"] = relationship(back_populates="messages")
 
@@ -96,6 +104,8 @@ class MessageTombstone(Base):
     role: Mapped[str] = mapped_column(String(16))
     content: Mapped[str] = mapped_column(Text)
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime, default=utcnow)
+    # Which device deleted this Q/A (audit trail on the master server).
+    deleted_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
     conversation: Mapped["Conversation"] = relationship()
 

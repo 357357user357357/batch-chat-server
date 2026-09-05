@@ -307,7 +307,12 @@ class SyncMessage(BaseModel):
 
 class SyncConversationOut(BaseModel):
     """One dialog as returned by a sync pull. `deleted` tombstones removals so
-    other devices can drop their local copy instead of keeping a stale one."""
+    other devices can drop their local copy instead of keeping a stale one.
+
+    Audit trail (master-server archive): origin_device = whose record it was
+    (first creator), modified_by = the last device that changed it, deleted_at
+    + deleted_by = when and by which device it was deleted.
+    """
 
     external_id: str
     kind: str = "chat"
@@ -316,6 +321,10 @@ class SyncConversationOut(BaseModel):
     created_at: datetime | None = None
     updated_at: datetime | None = None
     deleted: bool = False
+    origin_device: str | None = None
+    modified_by: str | None = None
+    deleted_at: datetime | None = None
+    deleted_by: str | None = None
     messages: list[SyncMessage] = []
 
 

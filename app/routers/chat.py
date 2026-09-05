@@ -2,11 +2,12 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import timezone
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.database import get_db
+from app.device import device_label
 from app.models import AuthToken, Conversation, Message, utcnow
 from app.schemas import (
     ChatRequest,
@@ -52,6 +53,7 @@ def available_models() -> dict:
 @router.post("/send", response_model=ChatResponse)
 def send_chat(
     payload: ChatRequest,
+    request: Request,
     db: Session = Depends(get_db),
     _: AuthToken = Depends(get_current_token),
 ) -> ChatResponse:
@@ -62,7 +64,9 @@ def send_chat(
             raise HTTPException(status_code=404, detail="Conversation not found")
     else:
         title = (payload.user_message[:50] + "…") if len(payload.user_message) > 50 else payload.user_message
-        conv = Conversation(title=title[:255] or "New chat", kind="chat")
+        device = device_label(request)
+        conv = Conversation(title=title[:255] or "New chat", kind="chat",
+                            origin_device=device, modified_by=device)
         db.add(conv)
         db.commit()
         db.refresh(conv)

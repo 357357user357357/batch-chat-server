@@ -477,3 +477,106 @@ def test_cache_keeper_disabled_without_1h_cache(monkeypatch):
     cache_keeper.record(999999, "SYSTEM", ["openai/gpt-4o-mini"])
     assert 999999 not in cache_keeper._entries
     cache_keeper.reset_for_tests()
+
+
+def test_sync_audit_trail_attribution():
+    """Master-server archive: every record remembers whose it was, who last
+    modified it, and when/by whom it was deleted — and soft-deleted records
+    stay in the master DB (tombstoned, never wiped)."""
+    import sqlite3
+
+    from app.database import engine
+
+    headers = auth_headers()
+    phone_headers = {**headers, "X-Device-Name": "redmi-note-9t"}
+
+    # 1. Phone pushes a dialog → origin_device = the phone.
+    resp = client.post(
+        "/api/sync/push",
+        headers=phone_headers,
+        json={"dialogs": [{"id": "audit-dlg", "title": "Audit", "model": "m",
+                           "messages": [{"role": "user", "content": "hi"},
+                                        {"role": "assistant", "content": "hello"}]}],
+              "batches": [], "deleted_external_ids": [], "keys": {}},
+    )
+    assert resp.status_code == 200, resp.text
+
+    pulled = client.get("/api/sync/pull", headers=headers).json()
+    dlg = next(c for c in pulled["conversations"] if c["external_id"] == "audit-dlg")
+    assert dlg["origin_device"] == "redmi-note-9t"
+    assert dlg["modified_by"] == "redmi-note-9t"
+    assert dlg["deleted"] is False
+
+    # 2. Web deletes it → deleted_at + deleted_by = web, record stays archived.
+    with sqlite3.connect(engine.url.database) as conn:
+        row = conn.execute(
+            "SELECT id FROM conversations WHERE external_id='audit-dlg'"
+        ).fetchone()
+    conv_id = row[0]
+    resp = client.delete(
+        f"/api/conversations/{conv_id}",
+        headers={**headers, "User-Agent": "Mozilla/5.0 web-test"},
+    )
+    assert resp.status_code == 204
+
+    with sqlite3.connect(engine.url.database) as conn:
+        conn.row_factory = sqlite3.Row
+        archived = conn.execute(
+            "SELECT deleted_at, deleted_by, origin_device, title "
+            "FROM conversations WHERE id=?",
+            (conv_id,),
+        ).fetchone()
+    assert archived["deleted_at"] is not None            # deletion DATE recorded
+    assert archived["deleted_by"] == "web"               # WHO deleted it
+    assert archived["origin_device"] == "redmi-note-9t"  # WHOSE record it was
+    assert archived["title"] == "Audit"                  # content kept (archive)
+
+    # 3. Pull shows the tombstone with the audit fields (devices drop it).
+    pulled = client.get("/api/sync/pull", headers=headers).json()
+    dlg = next(c for c in pulled["conversations"] if c["external_id"] == "audit-dlg")
+    assert dlg["deleted"] is True
+    assert dlg["deleted_at"] is not None
+    assert dlg["deleted_by"] == "web"
+    assert dlg["origin_device"] == "redmi-note-9t"
+
+    # Cleanup (hard delete, test-only).
+    with sqlite3.connect(engine.url.database) as conn:
+        conn.execute("DELETE FROM message_tombstones WHERE conversation_id=?", (conv_id,))
+        conn.execute("DELETE FROM messages WHERE conversation_id=?", (conv_id,))
+        conn.execute("DELETE FROM conversations WHERE id=?", (conv_id,))
+
+
+def test_message_deletion_records_deleted_by():
+    """Per-message removal stores who deleted the Q/A (web or phone)."""
+    import sqlite3
+
+    from app.database import engine
+
+    headers = auth_headers()
+    conv = client.post("/api/conversations", headers=headers,
+                       json={"title": "audit-msg"}).json()
+    msg = client.post(f"/api/conversations/{conv['id']}/messages", headers=headers,
+                      json={"role": "user", "content": "to be removed"}).json()
+    resp = client.delete(
+        f"/api/conversations/{conv['id']}/messages/{msg['id']}",
+        headers={**headers, "User-Agent": "Mozilla/5.0 web-test"},
+    )
+    assert resp.status_code == 204
+
+    with sqlite3.connect(engine.url.database) as conn:
+        conn.row_factory = sqlite3.Row
+        row = conn.execute(
+            "SELECT deleted_at, deleted_by FROM messages WHERE id=?", (msg["id"],)
+        ).fetchone()
+        tomb = conn.execute(
+            "SELECT deleted_by FROM message_tombstones WHERE conversation_id=?",
+            (conv["id"],),
+        ).fetchone()
+    assert row["deleted_at"] is not None
+    assert row["deleted_by"] == "web"
+    assert tomb is not None and tomb["deleted_by"] == "web"
+
+    with sqlite3.connect(engine.url.database) as conn:
+        conn.execute("DELETE FROM message_tombstones WHERE conversation_id=?", (conv["id"],))
+        conn.execute("DELETE FROM messages WHERE conversation_id=?", (conv["id"],))
+        conn.execute("DELETE FROM conversations WHERE id=?", (conv["id"],))
