@@ -17,12 +17,14 @@ def chat_completion(
     messages: list[dict[str, str]],
     temperature: float | None = None,
     max_tokens: int | None = None,
+    reasoning_effort: str | None = None,
 ) -> str:
     if model.startswith("vertex:"):
         return vertex_ai.chat_completion(model[len("vertex:"):], messages, temperature, max_tokens)
     if model.startswith("bedrock:"):
         return bedrock.chat_completion(model[len("bedrock:"):], messages, temperature, max_tokens)
-    return openrouter.chat_completion(model, messages, temperature, max_tokens)
+    return openrouter.chat_completion(model, messages, temperature, max_tokens,
+                                      reasoning_effort=reasoning_effort)
 
 
 def default_models() -> list[str]:
