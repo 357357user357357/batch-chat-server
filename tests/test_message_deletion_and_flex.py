@@ -176,6 +176,76 @@ def test_flex_unsupported_error_detection():
     assert not is_flex_unsupported_error(404, "flex")
 
 
+def test_chat_send_reports_web_search_used(monkeypatch):
+    """web_search_used must be true only when Tavily results were injected,
+    so the web UI can badge the question instead of surprising the user."""
+    from app.routers import chat as chat_router
+
+    headers = auth_headers()
+
+    # Web search requested and Tavily returns results -> web_search_used true
+    monkeypatch.setattr(
+        chat_router.tavily, "is_configured", lambda: True
+    )
+    monkeypatch.setattr(
+        chat_router.tavily,
+        "search_web",
+        lambda *a, **k: [{"title": "t", "url": "https://x", "content": "c"}],
+    )
+    monkeypatch.setattr(
+        chat_router.tavily, "web_search_context", lambda *a, **k: "TEST CONTEXT"
+    )
+    monkeypatch.setattr(
+        chat_router,
+        "chat_completion",
+        lambda model, messages, temperature=None, max_tokens=None: "with context",
+    )
+
+    resp = client.post(
+        "/api/chat/send",
+        headers=headers,
+        json={"user_message": "search please", "models": ["openai/gpt-4o-mini"], "web_search": True},
+    )
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    assert data["web_search_used"] is True
+
+    # Web search off -> web_search_used false (no hidden injection)
+    resp = client.post(
+        "/api/chat/send",
+        headers=headers,
+        json={"user_message": "no search", "models": ["openai/gpt-4o-mini"], "web_search": False},
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["web_search_used"] is False
+
+
+def test_chat_send_injects_server_datetime(monkeypatch):
+    """The system prompt must carry the current date/time from the server
+    clock (phone-app parity) so time questions don't need web search."""
+    from app.routers import chat as chat_router
+
+    captured: dict = {}
+
+    def fake_completion(model, messages, temperature=None, max_tokens=None):
+        captured["messages"] = messages
+        return "ok"
+
+    monkeypatch.setattr(chat_router, "chat_completion", fake_completion)
+
+    resp = client.post(
+        "/api/chat/send",
+        headers=auth_headers(),
+        json={"user_message": "what time is it", "models": ["openai/gpt-4o-mini"]},
+    )
+    assert resp.status_code == 200, resp.text
+
+    system = captured["messages"][0]
+    assert system["role"] == "system"
+    assert "Current date and time:" in system["content"]
+    assert "reliable server clock" in system["content"]
+
+
 def test_chat_completion_falls_back_when_flex_rejected(monkeypatch):
     """Astra without flex → HTTP 400 mentioning the tier → automatic retry on
     the standard tier returns the answer."""

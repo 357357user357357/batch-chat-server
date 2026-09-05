@@ -329,6 +329,18 @@ input:focus, textarea:focus { outline: 2px solid var(--accent); outline-offset: 
   font-weight: 700;
 }
 
+.message-websearch {
+  display: inline-block;
+  font-size: 10px;
+  padding: 1px 6px;
+  margin-bottom: 4px;
+  border-radius: 4px;
+  border: 1px solid #1d5a45;
+  background: #123a2e;
+  color: #7ce0b0;
+  cursor: help;
+}
+
 .message-err { color: var(--error); font-size: 13px; margin-top: 4px; }
 
 /* ---------- Chat form ---------- */

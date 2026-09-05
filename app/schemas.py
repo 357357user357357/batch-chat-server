@@ -91,6 +91,10 @@ class ChatResponse(BaseModel):
     conversation_title: str
     user_message: MessageOut
     responses: list[ChatResponseItem]
+    # True when Tavily web results were injected into the prompt for this
+    # message — lets the web UI badge the question so the answer's "according
+    # to the latest web results" wording is never a surprise.
+    web_search_used: bool = False
 
 
 class ImportMessage(BaseModel):

@@ -1,4 +1,5 @@
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import timezone
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -87,10 +88,12 @@ def send_chat(
 
     # Optional Tavily web search, injected into the system prompt like the app.
     system = payload.system or ""
+    web_search_used = False
     if payload.web_search and tavily.is_configured():
         try:
             results = tavily.search_web(payload.user_message, max_results=3)
             if results:
+                web_search_used = True
                 suffix = (
                     "Use the most relevant web context below when answering.\n\n"
                     + tavily.web_search_context(payload.user_message, results)
@@ -99,6 +102,19 @@ def send_chat(
         except ProviderError:
             # A failed search shouldn't block the chat — answer without context.
             pass
+
+    # Current date/time from the reliable server clock (mirrors the Android
+    # app's currentDateTimePrompt): "what's the time now" answers from the
+    # clock, not from stale web results.
+    now = utcnow().replace(tzinfo=timezone.utc).astimezone()
+    datetime_prompt = (
+        f"Current date and time: {now.strftime('%A, %d %B %Y, %H:%M')} "
+        f"({now.tzname() or 'UTC'}) — the reliable server clock. "
+        "Answer questions about the current time, date, day of the week, or "
+        "time zones using this information. Do not use web search results "
+        "for the current time."
+    )
+    system = (datetime_prompt + "\n\n" + system).strip()
 
     # The model has no clock of its own: give it the server's real date/time
     # so questions like "what time is it now" are answered correctly and stale
@@ -160,4 +176,5 @@ def send_chat(
         conversation_title=conv.title,
         user_message=MessageOut.model_validate(user_msg),
         responses=ordered,
+        web_search_used=web_search_used,
     )

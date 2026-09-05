@@ -445,6 +445,14 @@ function appendMessage(msg) {
   div.className = `message ${msg.role}`;
   div.dataset.messageId = msg.id;
 
+  if (msg.webSearch) {
+    const webTag = document.createElement("span");
+    webTag.className = "message-websearch";
+    webTag.title = "Tavily web search results were injected into the prompt for this message";
+    webTag.textContent = "🌐 Web search";
+    div.appendChild(webTag);
+  }
+
   if (msg.model) {
     const modelTag = document.createElement("span");
     modelTag.className = "message-model";
@@ -592,6 +600,16 @@ function scrollToBottom() {
 }
 
 // ---------------------------------------------------------------
+// Web-search toggle — explicitly persisted, default OFF.
+// (Without this, browsers restore the checkbox state on soft reloads and
+// Tavily results get injected into chats without the user noticing.)
+// ---------------------------------------------------------------
+els.webSearchToggle.checked = localStorage.getItem("bc_web_search") === "1";
+els.webSearchToggle.addEventListener("change", () => {
+  localStorage.setItem("bc_web_search", els.webSearchToggle.checked ? "1" : "0");
+});
+
+// ---------------------------------------------------------------
 // Send / batch chat
 // ---------------------------------------------------------------
 els.chatForm.addEventListener("submit", async (e) => {
@@ -635,7 +653,7 @@ els.chatForm.addEventListener("submit", async (e) => {
     state.currentConversationId = resp.conversation_id;
     els.chatInput.value = "";
 
-    appendMessage(resp.user_message);
+    appendMessage({ ...resp.user_message, webSearch: resp.web_search_used === true });
     resp.responses.forEach((r) => {
       if (r.ok) appendMessage({ id: r.message_id ?? null, role: "assistant", content: r.content, model: r.model });
       else appendError(r.model, r.error);
