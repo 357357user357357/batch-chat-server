@@ -640,11 +640,11 @@ function scrollToBottom() {
 }
 
 // ---------------------------------------------------------------
-// Web-search toggle — explicitly persisted, default OFF.
-// (Without this, browsers restore the checkbox state on soft reloads and
-// Tavily results get injected into chats without the user noticing.)
+// Web-search toggle — explicitly persisted, default ON.
+// (State is saved explicitly so browsers can't silently restore a
+// stale checkbox on soft reloads; unchecking it once keeps it off.)
 // ---------------------------------------------------------------
-els.webSearchToggle.checked = localStorage.getItem("bc_web_search") === "1";
+els.webSearchToggle.checked = localStorage.getItem("bc_web_search") !== "0";
 els.webSearchToggle.addEventListener("change", () => {
   localStorage.setItem("bc_web_search", els.webSearchToggle.checked ? "1" : "0");
 });
