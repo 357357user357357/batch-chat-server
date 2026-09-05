@@ -20,6 +20,7 @@ cache and pay full input price (the opposite of the goal).
 import logging
 import threading
 import time
+from collections import deque
 
 from app.config import settings
 
@@ -39,7 +40,20 @@ _entries: dict[int, dict] = {}
 # conversation_ids the user explicitly enabled via the 🔥 Cache toggle —
 # only these are ever pinged. Persisted in app_settings by the router.
 _enabled: set[int] = set()
+# Recent ping attempts (newest last) so the UI can prove pings are being
+# sent WITHOUT creating any stub dialogs: {ts, conversation_id, model, ok, error}
+_ping_log: deque = deque(maxlen=50)
 _thread: threading.Thread | None = None
+
+
+def ping_log() -> list[dict]:
+    with _lock:
+        return list(_ping_log)
+
+
+def enabled_ids() -> list[int]:
+    with _lock:
+        return sorted(_enabled)
 
 
 def set_enabled(conversation_id: int, enabled: bool) -> None:
@@ -175,8 +189,24 @@ def _ping(conversation_id: int, model: str) -> None:
         from app.services.openrouter import chat_completion
 
         chat_completion(model, messages, temperature=0, max_tokens=PING_MAX_TOKENS)
+        with _lock:
+            _ping_log.append({
+                "ts": time.time(),
+                "conversation_id": conversation_id,
+                "model": model,
+                "ok": True,
+                "error": None,
+            })
         logger.info("Keep-alive ping sent (conv=%s model=%s)", conversation_id, model)
     except Exception as exc:
+        with _lock:
+            _ping_log.append({
+                "ts": time.time(),
+                "conversation_id": conversation_id,
+                "model": model,
+                "ok": False,
+                "error": str(exc)[:200],
+            })
         logger.warning("Keep-alive ping failed (conv=%s model=%s): %s",
                        conversation_id, model, exc)
 
@@ -185,3 +215,4 @@ def reset_for_tests() -> None:
     with _lock:
         _entries.clear()
         _enabled.clear()
+        _ping_log.clear()

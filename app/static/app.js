@@ -61,6 +61,7 @@ const els = {
   cacheBtn: $("#cache-btn"),
   syncBtn: $("#sync-btn"),
   reasoningSelect: $("#reasoning-select"),
+  cachePings: $("#cache-pings"),
   batchModal: $("#batch-modal"),
   batchClose: $("#batch-close"),
   batchModel: $("#batch-model"),
@@ -903,6 +904,57 @@ function openBatch() {
   els.batchStatus.textContent = "";
   els.batchModal.classList.remove("hidden");
   loadBatches();
+  renderCachePings();
+}
+
+/** 🔥 Cache keep-alive verification feed (inside the 📊 Status modal). */
+async function renderCachePings() {
+  const box = els.cachePings;
+  if (!box) return;
+  box.textContent = "Loading…";
+  try {
+    const data = await api("/api/conversations/keepalive/pings");
+    box.innerHTML = "";
+    const enabled = data.enabled || [];
+    const pings = (data.pings || []).slice().reverse(); // newest first
+    if (enabled.length) {
+      const line = document.createElement("div");
+      line.className = "cache-ping-enabled";
+      line.textContent = `Warming ${enabled.length} dialog(s): ` +
+        enabled.map((e) => `#${e.conversation_id} ${e.title}`).join(", ");
+      box.appendChild(line);
+    }
+    if (!pings.length) {
+      const empty = document.createElement("div");
+      empty.className = "cache-ping-empty";
+      empty.textContent = enabled.length
+        ? `No pings sent yet — the first one fires ≤${data.interval_minutes} min after the dialog's last answer.`
+        : "No dialogs warming. Open a dialog and press 🔥 Cache to start.";
+      box.appendChild(empty);
+      return;
+    }
+    for (const p of pings) {
+      const row = document.createElement("div");
+      row.className = "cache-ping-row";
+      const when = new Date(p.ts * 1000).toLocaleTimeString();
+      const mark = document.createElement("span");
+      mark.className = `cache-ping-mark ${p.ok ? "ok" : "fail"}`;
+      mark.textContent = p.ok ? "✓" : "✗";
+      const label = document.createElement("span");
+      label.textContent = `${when} · ${p.title} · ${p.model}`;
+      label.title = `${p.title} · ${p.model}`;
+      row.append(mark, label);
+      if (!p.ok) {
+        const err = document.createElement("div");
+        err.className = "cache-ping-error";
+        err.textContent = p.error || "failed";
+        row.appendChild(err);
+      }
+      box.appendChild(row);
+    }
+  } catch (err) {
+    box.textContent = `Could not load ping log: ${err.message}`;
+  }
 }
 
 function closeBatch() {

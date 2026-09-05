@@ -398,6 +398,13 @@ def test_cache_keeper_pings_only_enabled_conversations(monkeypatch):
     cache_keeper._tick()
     assert len(pings) == 1
 
+    # Every attempt is recorded in the verification ping log (ok entry).
+    log = cache_keeper.ping_log()
+    assert len(log) == 1
+    assert log[0]["conversation_id"] == conv["id"]
+    assert log[0]["model"] == "openai/gpt-4o-mini"
+    assert log[0]["ok"] is True
+
     # Entries outside the keep-alive window are dropped (no more pings).
     monkeypatch.setattr(
         cache_keeper.time, "time", lambda: old_now() + 4 * 3600, raising=False
@@ -431,6 +438,54 @@ def test_keepalive_toggle_endpoint():
     assert resp.json()["keepalive"] is False
     detail = client.get(f"/api/conversations/{conv['id']}", headers=headers).json()
     assert detail["keepalive"] is False
+
+
+def test_keepalive_pings_endpoint_reports_log():
+    """The verification feed lists recent pings (with dialog titles) without
+    any stub dialogs ever being created."""
+    from app.services import cache_keeper
+    from app.config import settings as app_settings
+
+    cache_keeper.reset_for_tests()
+    monkeypatch_free_headers = auth_headers()
+    conv = client.post("/api/conversations", headers=monkeypatch_free_headers,
+                       json={"title": "ping-feed"}).json()
+
+    # Simulate one successful ping attempt via the keeper's own log.
+    cache_keeper.record(conv["id"], "SYS", ["openai/gpt-4o-mini"])
+    cache_keeper.set_enabled(conv["id"], True)
+    import time as time_mod
+
+    real_time = time_mod.time
+    monkeypatch_old = cache_keeper.time.time
+    cache_keeper.time.time = lambda: real_time() - 46 * 60
+
+    def fake_completion(model, messages, temperature=None, max_tokens=None,
+                        reasoning_effort=None):
+        return "."
+
+    import app.services.openrouter as _or
+
+    saved = _or.chat_completion
+    _or.chat_completion = fake_completion
+    try:
+        cache_keeper._tick()
+    finally:
+        _or.chat_completion = saved
+        cache_keeper.time.time = monkeypatch_old
+
+    resp = client.get("/api/conversations/keepalive/pings",
+                      headers=monkeypatch_free_headers)
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    assert data["interval_minutes"] == 45
+    assert {"conversation_id": conv["id"], "title": "ping-feed"} in data["enabled"]
+    assert len(data["pings"]) == 1
+    ping = data["pings"][0]
+    assert ping["ok"] is True
+    assert ping["title"] == "ping-feed"
+    assert ping["model"] == "openai/gpt-4o-mini"
+    cache_keeper.reset_for_tests()
 
 
 def test_cache_keeper_pings_flex_models_with_suffix(monkeypatch):

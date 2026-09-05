@@ -546,3 +546,18 @@ input:focus, textarea:focus { outline: 2px solid var(--accent); outline-offset: 
   font-size: 12px;
   padding: 4px 6px;
 }
+
+.cache-pings-wrap { margin-top: 14px; border-top: 1px solid var(--border); padding-top: 10px; }
+.cache-pings-title { margin: 0 0 4px; font-size: 13px; }
+.cache-pings-hint { margin: 0 0 8px; font-size: 11px; color: var(--text-muted); }
+.cache-pings { display: flex; flex-direction: column; gap: 4px; max-height: 180px; overflow-y: auto; }
+.cache-ping-row {
+  display: flex; align-items: baseline; gap: 8px;
+  font-size: 12px; flex-wrap: wrap;
+}
+.cache-ping-mark { font-weight: 700; }
+.cache-ping-mark.ok { color: var(--success); }
+.cache-ping-mark.fail { color: var(--error); }
+.cache-ping-error { flex-basis: 100%; color: var(--error); font-size: 11px; }
+.cache-ping-empty { font-size: 12px; color: var(--text-muted); }
+.cache-ping-enabled { font-size: 11px; color: var(--text-muted); margin-bottom: 4px; }
