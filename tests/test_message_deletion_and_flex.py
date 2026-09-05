@@ -227,7 +227,7 @@ def test_chat_send_injects_server_datetime(monkeypatch):
 
     captured: dict = {}
 
-    def fake_completion(model, messages, temperature=None, max_tokens=None):
+    def fake_completion(model, messages, temperature=None, max_tokens=None, reasoning_effort=None):
         captured["messages"] = messages
         return "ok"
 
@@ -369,7 +369,7 @@ def test_cache_keeper_pings_only_enabled_conversations(monkeypatch):
 
     pings: list[dict] = []
 
-    def fake_completion(model, messages, temperature=None, max_tokens=None):
+    def fake_completion(model, messages, temperature=None, max_tokens=None, reasoning_effort=None):
         pings.append({"model": model, "messages": messages, "max_tokens": max_tokens})
         return "."
 
@@ -450,7 +450,7 @@ def test_cache_keeper_pings_flex_models_with_suffix(monkeypatch):
     flex_model = "openai/gpt-6-astra:flex"
     pings: list[dict] = []
 
-    def fake_completion(model, messages, temperature=None, max_tokens=None):
+    def fake_completion(model, messages, temperature=None, max_tokens=None, reasoning_effort=None):
         pings.append({"model": model, "messages": messages})
         return "."
 
@@ -477,6 +477,114 @@ def test_cache_keeper_disabled_without_1h_cache(monkeypatch):
     cache_keeper.record(999999, "SYSTEM", ["openai/gpt-4o-mini"])
     assert 999999 not in cache_keeper._entries
     cache_keeper.reset_for_tests()
+
+
+def test_push_never_resurrects_deleted_dialogs(monkeypatch):
+    """Regression for the phone's 'Sync now' re-creating deleted dialogs:
+    a stale push against a tombstoned dialog is skipped; the tombstone wins
+    and the pusher drops its local copy on the next pull."""
+    headers = auth_headers()
+    phone_headers = {**headers, "X-Device-Name": "redmi-note-9t"}
+    dialog = {"id": "resurrect-dlg", "title": "Resurrect", "model": "m",
+              "messages": [{"role": "user", "content": "old"}]}
+
+    # 1. Phone pushes a dialog; server stores it.
+    resp = client.post("/api/sync/push", headers=phone_headers,
+                       json={"dialogs": [dialog], "batches": [],
+                             "deleted_external_ids": [], "keys": {}})
+    assert resp.status_code == 200
+    assert resp.json()["created"] == 1
+
+    # 2. The web deletes it (tombstone on the master server).
+    import sqlite3
+
+    from app.database import engine
+
+    with sqlite3.connect(engine.url.database) as conn:
+        conv_id = conn.execute(
+            "SELECT id FROM conversations WHERE external_id='resurrect-dlg'"
+        ).fetchone()[0]
+    assert client.delete(f"/api/conversations/{conv_id}", headers={**headers, "X-Device-Name": "web-test"}).status_code == 204
+
+    # 3. Phone (still holding its local copy) pushes the SAME dialog again —
+    #    it must NOT come back to life on the server.
+    resp = client.post("/api/sync/push", headers=phone_headers,
+                       json={"dialogs": [dialog], "batches": [],
+                             "deleted_external_ids": [], "keys": {}})
+    assert resp.status_code == 200
+    assert resp.json()["skipped_deleted"] == 1
+    assert resp.json()["updated"] == 0
+
+    with sqlite3.connect(engine.url.database) as conn:
+        conn.row_factory = sqlite3.Row
+        row = conn.execute(
+            "SELECT deleted_at, deleted_by, title FROM conversations WHERE id=?",
+            (conv_id,),
+        ).fetchone()
+    assert row["deleted_at"] is not None           # still tombstoned
+    assert row["deleted_by"] == "web-test"            # original deletion kept
+
+    # 4. Pull still reports deleted:true so the phone removes its local copy.
+    pulled = client.get("/api/sync/pull", headers=headers).json()
+    dlg = next(c for c in pulled["conversations"] if c["external_id"] == "resurrect-dlg")
+    assert dlg["deleted"] is True
+
+    # Cleanup (hard, test-only).
+    with sqlite3.connect(engine.url.database) as conn:
+        conn.execute("DELETE FROM message_tombstones WHERE conversation_id=?", (conv_id,))
+        conn.execute("DELETE FROM messages WHERE conversation_id=?", (conv_id,))
+        conn.execute("DELETE FROM conversations WHERE id=?", (conv_id,))
+
+
+def test_reasoning_effort_reaches_openrouter_payload(monkeypatch):
+    """Reasoning effort is forwarded as OpenRouter's unified reasoning param:
+    'none' → {"enabled": false}; levels → {"effort": level}; default → absent."""
+    calls = []
+
+    class FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {"choices": [{"message": {"content": "ok"}}]}
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def post(self, url, headers=None, json=None):
+            calls.append(dict(json))
+            return FakeResponse()
+
+    import httpx
+
+    monkeypatch.setattr(httpx, "Client", FakeClient)
+
+    chat_completion("openai/gpt-6-astra", [{"role": "user", "content": "hi"}])
+    assert "reasoning" not in calls[-1]  # default: nothing sent
+
+    chat_completion("openai/gpt-6-astra", [{"role": "user", "content": "hi"}],
+                    reasoning_effort="none")
+    assert calls[-1]["reasoning"] == {"enabled": False}
+
+    chat_completion("openai/gpt-6-astra", [{"role": "user", "content": "hi"}],
+                    reasoning_effort="xhigh")
+    assert calls[-1]["reasoning"] == {"effort": "xhigh"}
+
+
+def test_chat_send_rejects_invalid_reasoning_effort():
+    """The API validates the reasoning effort against the allowed levels."""
+    headers = auth_headers()
+    resp = client.post("/api/chat/send", headers=headers, json={
+        "user_message": "hi", "models": ["openai/gpt-6-astra"],
+        "reasoning_effort": "ultra",
+    })
+    assert resp.status_code == 422
 
 
 def test_sync_audit_trail_attribution():

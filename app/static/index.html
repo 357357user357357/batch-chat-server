@@ -57,6 +57,16 @@
           </div>
           <button id="batch-btn" class="btn btn-ghost btn-small" title="Batch job statuses (async JSONL jobs, ~50% cost)">📊 Status<span id="batch-badge" class="batch-badge hidden" title="Active batch jobs"></span></button>
           <button type="button" id="cache-btn" class="mode-btn" title="🔥 Cache keep-alive: warm the open dialog's prompt cache with near-empty pings every 45 min (window from Settings). Click to toggle.">🔥 Cache</button>
+          <button type="button" id="sync-btn" class="mode-btn" title="🔄 Sync now: refresh dialogs and the open conversation from the master database (same as the phone's Sync now)">🔄 Sync</button>
+          <select id="reasoning-select" class="reasoning-select" title="Reasoning effort (thinking budget) sent to the model via OpenRouter's unified reasoning parameter. Default = the model's own default.">
+            <option value="">🧠 Default</option>
+            <option value="none">🧠 None</option>
+            <option value="low">🧠 Low</option>
+            <option value="medium">🧠 Medium</option>
+            <option value="high">🧠 High</option>
+            <option value="xhigh">🧠 XHigh</option>
+            <option value="max">🧠 Max</option>
+          </select>
           <div class="model-picker" id="model-picker">
           <button id="model-picker-btn" class="btn btn-ghost btn-small" title="Choose models">Models</button>
           <div id="model-dropdown" class="model-dropdown hidden">

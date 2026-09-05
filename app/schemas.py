@@ -77,6 +77,12 @@ class ChatRequest(BaseModel):
     system: str | None = None
     temperature: float | None = None
     max_tokens: int | None = None
+    # Reasoning effort (OpenRouter unified `reasoning` param): "none" disables
+    # thinking; low/medium/high/xhigh/max set the effort level. Default (None)
+    # leaves the model's own default.
+    reasoning_effort: str | None = Field(
+        default=None, pattern="^(none|low|medium|high|xhigh|max)$"
+    )
     # When true, run a Tavily web search and inject the top results into the
     # system prompt (like the Android app's web-search feature).
     web_search: bool = False
@@ -357,4 +363,7 @@ class SyncPushResponse(BaseModel):
     created: int
     updated: int
     deleted: int
+    # Stale pushes for dialogs already tombstoned on the master server were
+    # ignored (never resurrected); the pushing device drops them on its pull.
+    skipped_deleted: int = 0
     server_time: datetime

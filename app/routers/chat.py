@@ -147,6 +147,7 @@ def send_chat(
                 messages,
                 temperature=payload.temperature,
                 max_tokens=payload.max_tokens,
+                reasoning_effort=payload.reasoning_effort,
             )
             return ChatResponseItem(model=model, ok=True, content=content)
         except ProviderError as exc:

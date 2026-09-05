@@ -101,16 +101,20 @@ def push(
     created = 0
     updated = 0
     deleted = 0
+    skipped_deleted = 0
     device = device_label(request)
 
     for dialog in payload.dialogs:
         if not dialog.id:
             continue
         messages = dialog_messages(dialog)
-        if _upsert(db, external_id=dialog.id, kind="chat", model=dialog.model,
-                    title=title_default(dialog.title, "Imported chat"), messages=messages,
-                    device=device):
+        status = _upsert(db, external_id=dialog.id, kind="chat", model=dialog.model,
+                         title=title_default(dialog.title, "Imported chat"), messages=messages,
+                         device=device)
+        if status == "updated":
             updated += 1
+        elif status == "skipped_deleted":
+            skipped_deleted += 1  # tombstoned on the master — stale local copy
         else:
             created += 1
 
@@ -118,10 +122,13 @@ def push(
         if not item.id:
             continue
         messages = batch_messages(item)
-        if _upsert(db, external_id=item.id, kind="batch", model=item.model,
-                    title=title_default(item.title, "Batch"), messages=messages,
-                    device=device):
+        status = _upsert(db, external_id=item.id, kind="batch", model=item.model,
+                         title=title_default(item.title, "Batch"), messages=messages,
+                         device=device)
+        if status == "updated":
             updated += 1
+        elif status == "skipped_deleted":
+            skipped_deleted += 1
         else:
             created += 1
 
@@ -147,7 +154,8 @@ def push(
     adopt_missing_keys(db, payload.keys)
 
     db.commit()
-    return SyncPushResponse(created=created, updated=updated, deleted=deleted, server_time=utcnow())
+    return SyncPushResponse(created=created, updated=updated, deleted=deleted,
+                            skipped_deleted=skipped_deleted, server_time=utcnow())
 
 
 def _upsert(
@@ -159,9 +167,9 @@ def _upsert(
     title: str,
     messages: list[tuple[str, str, str | None]],
     device: str = "unknown",
-) -> bool:
-    """Create or update a conversation by external_id. Returns True if updated
-    (False if newly created).
+) -> str:
+    """Create or update a conversation by external_id. Returns "created",
+    "updated" or "skipped_deleted" (a stale push against a tombstoned dialog).
 
     Individually deleted Q/A are preserved: messages already archived on the
     server (deleted_at set) are never wiped by a device push, and incoming
@@ -170,7 +178,7 @@ def _upsert(
 
     Audit trail: a new record gets origin_device (whose record it is), and
     every device-driven change marks modified_by (last modifier; the date is
-    updated_at).
+    updated_at). Tombstoned (deleted) dialogs are never resurrected by a push.
     """
     conv = db.scalar(
         select(Conversation)
@@ -184,10 +192,15 @@ def _upsert(
         db.add(conv)
         db.flush()
         tombstones = set()
+    elif conv.deleted_at is not None:
+        # This dialog was deleted (on the web or another device) and the master
+        # server keeps the tombstone as the archive of truth. A push of a stale
+        # local copy must NOT resurrect it — the pushing device will drop its
+        # local copy when it pulls and sees `deleted: true`.
+        return "skipped_deleted"
     else:
         conv.title = title
         conv.model = model or conv.model
-        conv.deleted_at = None
         conv.updated_at = utcnow()
         conv.modified_by = device
         tombstones = set(
@@ -207,7 +220,7 @@ def _upsert(
         if (role, content) in tombstones:
             continue  # deleted from the web — keep it deleted
         db.add(Message(conversation_id=conv.id, role=role, content=content, model=msg_model))
-    return not is_new
+    return "updated" if not is_new else "created"
 
 
 def _parse_since(value: str):

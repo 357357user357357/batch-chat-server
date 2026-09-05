@@ -517,3 +517,32 @@ input:focus, textarea:focus { outline: 2px solid var(--accent); outline-offset: 
 .batch-job-status.completed { color: var(--success); }
 .batch-job-status.error, .batch-job-status.failed { color: var(--error); }
 .batch-job-status.pending { color: var(--accent-hover); }
+.batch-job-error {
+  flex-basis: 100%;
+  color: var(--error);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.batch-clear {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 11px;
+  line-height: 1;
+  padding: 3px 6px;
+}
+.batch-clear:hover { color: var(--error); border-color: var(--error); }
+.spinning { animation: sync-spin 0.9s linear infinite; }
+@keyframes sync-spin { to { transform: rotate(360deg); } }
+.reasoning-select {
+  background: var(--bg-elevated, #1c1c22);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  font-size: 12px;
+  padding: 4px 6px;
+}

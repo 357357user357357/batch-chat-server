@@ -124,6 +124,7 @@ def chat_completion(
     messages: list[dict[str, str]],
     temperature: float | None = None,
     max_tokens: int | None = None,
+    reasoning_effort: str | None = None,
 ) -> str:
     """Call a single OpenRouter model synchronously. Returns the reply text.
 
@@ -132,6 +133,11 @@ def chat_completion(
     provider does not offer flex for the model (e.g. some Astra releases), the
     request is automatically retried on the standard tier so the chat still
     works.
+
+    `reasoning_effort` controls the model's thinking budget via OpenRouter's
+    unified `reasoning` parameter: "none" disables reasoning entirely, any of
+    low/medium/high/xhigh/max sets the effort level. None (default) leaves the
+    model's own default untouched.
     """
     _require_key()
     base_model, tier = split_model_variant(model)
@@ -144,6 +150,10 @@ def chat_completion(
         payload["max_tokens"] = max_tokens
     if tier == "flex":
         payload["service_tier"] = "flex"
+    if reasoning_effort == "none":
+        payload["reasoning"] = {"enabled": False}
+    elif reasoning_effort:
+        payload["reasoning"] = {"effort": reasoning_effort}
 
     try:
         with httpx.Client(timeout=REQUEST_TIMEOUT) as client:

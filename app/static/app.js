@@ -59,6 +59,8 @@ const els = {
   batchBtn: $("#batch-btn"),
   batchBadge: $("#batch-badge"),
   cacheBtn: $("#cache-btn"),
+  syncBtn: $("#sync-btn"),
+  reasoningSelect: $("#reasoning-select"),
   batchModal: $("#batch-modal"),
   batchClose: $("#batch-close"),
   batchModel: $("#batch-model"),
@@ -663,6 +665,32 @@ els.webSearchToggle.addEventListener("change", () => {
   localStorage.setItem("bc_web_search", els.webSearchToggle.checked ? "1" : "0");
 });
 
+// Reasoning effort (thinking budget): persisted like the other composer
+// settings. Empty value = model default (nothing is sent to OpenRouter).
+els.reasoningSelect.value = localStorage.getItem("bc_reasoning") || "";
+els.reasoningSelect.addEventListener("change", () => {
+  localStorage.setItem("bc_reasoning", els.reasoningSelect.value);
+});
+
+// 🔄 Sync now (web = the master server, so syncing means re-reading the
+// master DB): refresh the dialog list and the open conversation — the same
+// immediate effect as the phone's "Sync now" button.
+els.syncBtn.addEventListener("click", async () => {
+  els.syncBtn.classList.add("spinning");
+  els.syncBtn.disabled = true;
+  try {
+    await loadConversations();
+    if (state.currentConversationId !== null) {
+      await openConversation(state.currentConversationId);
+    }
+  } catch (err) {
+    alert(`Sync failed: ${err.message}`);
+  } finally {
+    els.syncBtn.classList.remove("spinning");
+    els.syncBtn.disabled = false;
+  }
+});
+
 // ---------------------------------------------------------------
 // 🔥 Cache keep-alive toggle (per open dialog, opt-in)
 // ---------------------------------------------------------------
@@ -728,6 +756,9 @@ els.chatForm.addEventListener("submit", async (e) => {
         models,
         conversation_id: state.currentConversationId,
         web_search: els.webSearchToggle.checked,
+        ...(els.reasoningSelect.value
+          ? { reasoning_effort: els.reasoningSelect.value }
+          : {}),
       }),
     });
 
@@ -931,6 +962,9 @@ function renderBatchJobs() {
     els.batchJobs.textContent = "No batch jobs yet.";
     return;
   }
+  // Terminal (dead) jobs can be cleared from the list; live ones cannot.
+  const isDead = (s) =>
+    s === "failed" || s === "expired" || s === "cancelled" || s === "error";
   state.batches.slice(0, 6).forEach((job) => {
     const row = document.createElement("div");
     row.className = "batch-job-row";
@@ -940,6 +974,14 @@ function renderBatchJobs() {
     const label = document.createElement("span");
     label.textContent = `#${job.id} · ${job.title} · ${job.completed_items}/${job.total_items}`;
     row.append(label, status);
+    if (job.error) {
+      // Show WHY a job failed (e.g. missing API key, provider rejection).
+      const errLine = document.createElement("div");
+      errLine.className = "batch-job-error";
+      errLine.textContent = job.error;
+      errLine.title = job.error;
+      row.appendChild(errLine);
+    }
     if (job.conversation_id) {
       row.addEventListener("click", () => {
         openConversation(job.conversation_id);
@@ -947,6 +989,25 @@ function renderBatchJobs() {
       });
       row.style.cursor = "pointer";
       row.title = "Open the resulting conversation";
+    }
+    if (isDead(job.status)) {
+      const clear = document.createElement("button");
+      clear.className = "batch-clear";
+      clear.textContent = "✕";
+      clear.title = "Clear this finished/failed job from the list";
+      clear.addEventListener("click", async (e) => {
+        e.stopPropagation();
+        if (!confirm(`Clear batch job #${job.id} from the list?`)) return;
+        try {
+          await api(`/api/batches/${job.id}`, { method: "DELETE" });
+          state.batches = state.batches.filter((b) => b.id !== job.id);
+          renderBatchJobs();
+          loadBatches().catch(() => {});
+        } catch (err) {
+          alert(`Could not clear job: ${err.message}`);
+        }
+      });
+      row.appendChild(clear);
     }
     els.batchJobs.appendChild(row);
   });
