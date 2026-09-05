@@ -209,6 +209,7 @@ async function loadModels() {
   try {
     const data = await api("/api/chat/models");
     state.defaultModels = data.default_models || [];
+    state.modelPricing = data.pricing || {};
     const batchChatDefault = () => {
       // Batch chat default: Fable 5.1 (sync id — the :batch variant of the
       // default belongs to the async ⚡ JSONL batch modal).
@@ -316,8 +317,25 @@ function renderModelCheckboxes() {
       cb.addEventListener("change", () => toggleModel(model, cb.checked));
     }
     label.append(cb, model);
+    const price = state.modelPricing && state.modelPricing[model];
+    if (price) {
+      const span = document.createElement("span");
+      span.className = "model-price";
+      span.title = "USD per 1M tokens (prompt / completion)";
+      span.textContent = `· $${fmtPrice(price.prompt)} / $${fmtPrice(price.completion)} /1M`;
+      label.append(span);
+    }
     els.modelCheckboxes.appendChild(label);
   });
+}
+
+// Per-1M-token price formatting (same style as the phone app).
+function fmtPrice(price) {
+  if (price == null) return "—";
+  const per1m = price * 1_000_000;
+  if (per1m >= 100) return String(Math.round(per1m));
+  if (per1m >= 0.1) return per1m.toFixed(2);
+  return per1m > 0 ? `${Math.round(per1m * 100)}¢` : "0";
 }
 
 function toggleModel(model, checked) {

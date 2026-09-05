@@ -797,3 +797,37 @@ def test_message_deletion_records_deleted_by():
         conn.execute("DELETE FROM message_tombstones WHERE conversation_id=?", (conv["id"],))
         conn.execute("DELETE FROM messages WHERE conversation_id=?", (conv["id"],))
         conn.execute("DELETE FROM conversations WHERE id=?", (conv["id"],))
+
+def test_models_endpoint_includes_pricing(monkeypatch):
+    """The model picker endpoint exposes per-token pricing for the picker
+    models; :batch ids are priced at ~50% of the standard price."""
+    import app.routers.chat as chat_router
+    import app.services.openrouter as openrouter
+
+    monkeypatch.setattr(
+        openrouter,
+        "fetch_model_pricing",
+        lambda: {
+            "openai/gpt-6-astra": {"prompt": 2e-06, "completion": 8e-06},
+            "anthropic/claude-fable-5.1": {"prompt": 3e-06, "completion": 1.5e-05},
+            "~deepseek/deepseek-v4-flash-latest": {"prompt": 2.7e-07, "completion": 1.1e-06},
+        },
+        raising=False,
+    )
+    monkeypatch.setattr(
+        chat_router,
+        "default_models",
+        lambda: [
+            "openai/gpt-6-astra",
+            "~deepseek/deepseek-v4-flash-latest",
+            "anthropic/claude-fable-5.1:batch",
+        ],
+        raising=False,
+    )
+    data = client.get("/api/chat/models").json()
+    assert data["pricing"]["openai/gpt-6-astra"]["prompt"] == 2e-06
+    # DeepSeek's floating alias resolves through its plain catalog id.
+    assert "~deepseek/deepseek-v4-flash-latest" in data["pricing"]
+    # Async batch ids cost ~50% of the standard price.
+    batch = data["pricing"]["anthropic/claude-fable-5.1:batch"]
+    assert batch["prompt"] == 1.5e-06 and batch["completion"] == 7.5e-06

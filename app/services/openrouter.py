@@ -42,6 +42,10 @@ DEFAULT_BATCH_MODEL = "anthropic/claude-fable-5.1:batch"
 FLEX_SUFFIX = ":flex"
 BATCH_SUFFIX = ":batch"
 
+# Model pricing cache (USD per token, from the public OpenRouter catalog).
+_PRICING_CACHE: dict = {"data": None, "ts": 0.0}
+_PRICING_TTL_SECONDS = 3600.0
+
 
 def split_model_variant(model: str) -> tuple[str, str | None]:
     """Split "vendor/model[:tier]" into (base_model, tier) where tier is
@@ -53,6 +57,38 @@ def split_model_variant(model: str) -> tuple[str, str | None]:
     if stripped.endswith(BATCH_SUFFIX):
         return stripped, "batch"
     return stripped, None
+
+
+def fetch_model_pricing() -> dict[str, dict[str, float]]:
+    """Per-token model pricing (USD) from the public OpenRouter catalog,
+    keyed by plain base model id and cached for an hour. Never raises —
+    on any failure it returns whatever was cached last (possibly {})."""
+    now = time.time()
+    cached = _PRICING_CACHE["data"]
+    if cached is not None and now - _PRICING_CACHE["ts"] < _PRICING_TTL_SECONDS:
+        return cached
+    try:
+        resp = httpx.get(
+            "https://openrouter.ai/api/v1/models",
+            timeout=httpx.Timeout(15.0, connect=5.0),
+        )
+        resp.raise_for_status()
+        entries = resp.json().get("data", [])
+    except Exception:
+        return cached or {}
+    pricing: dict[str, dict[str, float]] = {}
+    for entry in entries:
+        raw = entry.get("pricing") or {}
+        try:
+            pricing[entry["id"]] = {
+                "prompt": float(raw.get("prompt") or 0),
+                "completion": float(raw.get("completion") or 0),
+            }
+        except (KeyError, TypeError, ValueError):
+            continue
+    _PRICING_CACHE["data"] = pricing
+    _PRICING_CACHE["ts"] = now
+    return pricing
 
 
 def is_reasoning_unsupported_error(status_code: int, message: str) -> bool:

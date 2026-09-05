@@ -43,10 +43,26 @@ def system_prompt_with_current_time(user_system: str | None) -> str:
 
 @router.get("/models")
 def available_models() -> dict:
+    # Pricing (USD per token) for the picker models, from the public
+    # OpenRouter catalog: :batch ids are ≈50% of the standard price.
+    catalog = openrouter.fetch_model_pricing()
+    pricing: dict[str, dict[str, float]] = {}
+    for model in default_models():
+        base, tier = openrouter.split_model_variant(model)
+        # split_model_variant keeps ":batch" in the base (it's part of the
+        # OpenRouter id) — the catalog is keyed by the plain id.
+        lookup = base.removesuffix(openrouter.BATCH_SUFFIX).lstrip("~")
+        entry = catalog.get(base.removesuffix(openrouter.BATCH_SUFFIX)) or catalog.get(lookup)
+        if not entry:
+            continue
+        if tier == "batch":
+            entry = {key: value * 0.5 for key, value in entry.items()}
+        pricing[model] = entry
     return {
         "default_models": default_models(),
         "default_live_model": openrouter.DEFAULT_LIVE_MODEL,
         "default_batch_model": openrouter.DEFAULT_BATCH_MODEL,
+        "pricing": pricing,
     }
 
 
