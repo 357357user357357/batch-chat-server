@@ -5,6 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import inspect, text
 
+from app.config import settings
 from app.database import Base, SessionLocal, engine
 from app.routers import auth, batches, chat, conversations, import_conversations, settings as settings_router, sync
 from app.services.batch_worker import start_batch_worker
@@ -27,6 +28,10 @@ def _run_migrations() -> None:
         if "deleted_at" not in existing:
             conn.execute(text("ALTER TABLE conversations ADD COLUMN deleted_at DATETIME"))
 
+        msg_existing = {col["name"] for col in inspector.get_columns("messages")}
+        if "deleted_at" not in msg_existing:
+            conn.execute(text("ALTER TABLE messages ADD COLUMN deleted_at DATETIME"))
+
 
 Base.metadata.create_all(bind=engine)
 _run_migrations()
@@ -46,9 +51,9 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=[o.strip() for o in settings.cors_origins.split(",") if o.strip()],
+    allow_methods=["GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type"],
 )
 
 app.include_router(auth.router)

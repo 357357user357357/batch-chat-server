@@ -81,6 +81,9 @@ class ChatResponseItem(BaseModel):
     ok: bool
     content: str | None = None
     error: str | None = None
+    # DB id of the persisted assistant message (lets the web UI delete a
+    # freshly received answer without reloading the conversation).
+    message_id: int | None = None
 
 
 class ChatResponse(BaseModel):
@@ -238,7 +241,7 @@ class BatchSubmitRequest(BaseModel):
       - Bedrock (Anthr.)  : {"recordId": "...", "modelInput": {"messages": [...]}}
     """
 
-    model: str = "anthropic/claude-fable-5:batch"
+    model: str = "anthropic/claude-fable-5.1:batch"
     jsonl: str = Field(min_length=1)
     title: str | None = None
     system: str | None = None

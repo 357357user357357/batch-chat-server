@@ -1,8 +1,13 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models import AuthToken
+from app.rate_limit import (
+    check_login_allowed,
+    record_login_failure,
+    record_login_success,
+)
 from app.schemas import (
     HealthResponse,
     LoginRequest,
@@ -20,9 +25,13 @@ def health() -> HealthResponse:
 
 
 @router.post("/auth/login", response_model=LoginResponse)
-def login(payload: LoginRequest, db: Session = Depends(get_db)) -> LoginResponse:
+def login(payload: LoginRequest, request: Request, db: Session = Depends(get_db)) -> LoginResponse:
+    # Brute-force protection: fail-2-lockout per client IP.
+    check_login_allowed(request)
     if not verify_password(payload.password):
+        record_login_failure(request)
         raise HTTPException(status_code=401, detail="Wrong password")
+    record_login_success(request)
     token = create_token(db)
     return LoginResponse(token=token.token, expires_at=token.expires_at)
 

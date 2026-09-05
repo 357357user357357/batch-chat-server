@@ -15,7 +15,18 @@ BATCH_ERROR_STATUSES = frozenset({"failed", "expired", "cancelled"})
 
 # A sane default list of models for the "batch" feature.
 # Users can send requests to several models at once and compare answers.
+#
+# Model ids may carry a processing-tier suffix:
+#   "…:flex"  → OpenAI Flex processing (service_tier="flex"): cheaper, slower
+#               synchronous runs. If the provider rejects the tier for that
+#               model (some — like Astra — only serve it sometimes), the server
+#               automatically falls back to a standard-tier request.
+#   "…:batch" → async Batch API (≈50% off, 24h window) — see create_batch().
+# Keeping tiers as plain suffixes means any future model works with zero code
+# changes: just type "vendor/new-model:flex" in the picker.
 DEFAULT_MODELS = [
+    "openai/astra",
+    "openai/astra:flex",
     "deepseek/deepseek-v4-flash-0731",
     "deepseek/deepseek-chat",
     "openai/gpt-4o-mini",
@@ -28,7 +39,33 @@ DEFAULT_MODELS = [
 ]
 
 # Default batch model: discounted async Batch API (≈50% of model price)
-DEFAULT_BATCH_MODEL = "anthropic/claude-fable-5:batch"
+DEFAULT_BATCH_MODEL = "anthropic/claude-fable-5.1:batch"
+
+# Known processing-tier suffixes (see DEFAULT_MODELS above).
+FLEX_SUFFIX = ":flex"
+BATCH_SUFFIX = ":batch"
+
+
+def split_model_variant(model: str) -> tuple[str, str | None]:
+    """Split "vendor/model[:tier]" into (base_model, tier) where tier is
+    "flex" | "batch" | None. Batch keeps its suffix (it is part of the
+    OpenRouter model id); flex is a request-level tier and is stripped."""
+    stripped = model.strip()
+    if stripped.endswith(FLEX_SUFFIX):
+        return stripped[: -len(FLEX_SUFFIX)], "flex"
+    if stripped.endswith(BATCH_SUFFIX):
+        return stripped, "batch"
+    return stripped, None
+
+
+def is_flex_unsupported_error(status_code: int, message: str) -> bool:
+    """True when the provider rejected the flex processing tier itself (the
+    model exists but not via flex) — callers then fall back to a standard
+    request (or the Batch API for bulk work)."""
+    if status_code != 400:
+        return False
+    lowered = message.lower()
+    return "service_tier" in lowered or "flex" in lowered
 
 
 class OpenRouterError(ProviderError):
@@ -91,15 +128,25 @@ def chat_completion(
     temperature: float | None = None,
     max_tokens: int | None = None,
 ) -> str:
-    """Call a single OpenRouter model synchronously. Returns the reply text."""
+    """Call a single OpenRouter model synchronously. Returns the reply text.
+
+    A ":flex" model suffix requests the Flex processing tier
+    (service_tier="flex"): cheaper in exchange for slower processing. When the
+    provider does not offer flex for the model (e.g. some Astra releases), the
+    request is automatically retried on the standard tier so the chat still
+    works.
+    """
     _require_key()
+    base_model, tier = split_model_variant(model)
     messages = _with_prompt_cache(messages, settings.cache_duration_seconds)
 
-    payload: dict = {"model": model, "messages": messages}
+    payload: dict = {"model": base_model, "messages": messages}
     if temperature is not None:
         payload["temperature"] = temperature
     if max_tokens is not None:
         payload["max_tokens"] = max_tokens
+    if tier == "flex":
+        payload["service_tier"] = "flex"
 
     try:
         with httpx.Client(timeout=REQUEST_TIMEOUT) as client:
@@ -109,9 +156,27 @@ def chat_completion(
                 json=payload,
             )
             if resp.status_code >= 400:
-                raise OpenRouterError(
-                    f"OpenRouter error (HTTP {resp.status_code}): {_safe_error(resp)}"
-                )
+                error_text = _safe_error(resp)
+                # Flex tier not available for this model → standard tier
+                if (
+                    tier == "flex"
+                    and is_flex_unsupported_error(resp.status_code, error_text)
+                ):
+                    payload.pop("service_tier", None)
+                    resp = client.post(
+                        f"{settings.openrouter_base_url}/chat/completions",
+                        headers=_headers(),
+                        json=payload,
+                    )
+                    if resp.status_code >= 400:
+                        raise OpenRouterError(
+                            f"OpenRouter error (HTTP {resp.status_code}): "
+                            f"{_safe_error(resp)}"
+                        )
+                else:
+                    raise OpenRouterError(
+                        f"OpenRouter error (HTTP {resp.status_code}): {error_text}"
+                    )
             data = resp.json()
     except httpx.HTTPError as exc:
         raise OpenRouterError(f"Request failed: {exc}") from exc
@@ -130,9 +195,13 @@ def chat_completion(
 def create_batch(model: str, requests: list[dict]) -> dict:
     """Submit an async batch. `requests` = [{custom_id, body}, ...].
 
+    A ":flex" model suffix tags every request with service_tier="flex"
+    (Flex processing through the Batch API — the cheapest path, used as the
+    fallback when the flex tier is not available for synchronous Astra calls).
     Returns the raw OpenRouter batch object (status is usually "validating").
     """
     _require_key()
+    base_model, tier = split_model_variant(model)
 
     cached_requests: list[dict] = []
     for request in requests:
@@ -145,13 +214,15 @@ def create_batch(model: str, requests: list[dict]) -> dict:
                 new_body["messages"] = _with_prompt_cache(
                     messages, settings.cache_duration_seconds
                 )
+            if tier == "flex":
+                new_body["service_tier"] = "flex"
             item["body"] = new_body
         cached_requests.append(item)
 
     payload = {
         # The docs require endpoint and model serialized BEFORE requests
         "endpoint": "/v1/chat/completions",
-        "model": model,
+        "model": base_model,
         "requests": cached_requests,
     }
     try:

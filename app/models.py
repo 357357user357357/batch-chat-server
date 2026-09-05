@@ -66,8 +66,35 @@ class Message(Base):
     model: Mapped[str | None] = mapped_column(String(255), nullable=True)
     content: Mapped[str] = mapped_column(Text)
     created_at: Mapped[datetime | None] = mapped_column(DateTime, default=utcnow)
+    # Soft-delete tombstone for individual Q/A removals (web UI): the text
+    # stays archived in the DB, but the message no longer shows up in the
+    # dialog, in sync pulls, or on other devices.
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     conversation: Mapped["Conversation"] = relationship(back_populates="messages")
+
+
+class MessageTombstone(Base):
+    """Remembers that a specific question/answer was deleted inside a dialog.
+
+    The phone app syncs whole dialogs (full message list, no per-message ids),
+    so without this record the next phone push would re-upload a message the
+    user deleted from the web. Keyed by (conversation_id, role, content) and
+    checked during sync push/upsert so deleted Q/A stay deleted everywhere,
+    while the original text remains archived here in the database.
+    """
+
+    __tablename__ = "message_tombstones"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    conversation_id: Mapped[int] = mapped_column(
+        ForeignKey("conversations.id"), index=True
+    )
+    role: Mapped[str] = mapped_column(String(16))
+    content: Mapped[str] = mapped_column(Text)
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime, default=utcnow)
+
+    conversation: Mapped["Conversation"] = relationship()
 
 
 class BatchJob(Base):

@@ -16,7 +16,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
 from app.database import get_db
-from app.models import AuthToken, Conversation, Message, utcnow
+from app.models import AuthToken, Conversation, Message, MessageTombstone, utcnow
 from app.schemas import (
     SyncConversationOut,
     SyncMessage,
@@ -69,6 +69,7 @@ def pull(
                 else [
                     SyncMessage(role=m.role, content=m.content, model=m.model)
                     for m in conv.messages
+                    if m.deleted_at is None
                 ],
             )
         )
@@ -143,30 +144,47 @@ def _upsert(
     messages: list[tuple[str, str, str | None]],
 ) -> bool:
     """Create or update a conversation by external_id. Returns True if updated
-    (False if newly created)."""
+    (False if newly created).
+
+    Individually deleted Q/A are preserved: messages already archived on the
+    server (deleted_at set) are never wiped by a device push, and incoming
+    messages matching a tombstone (role + exact content) are skipped so a
+    deleted question/answer cannot be resurrected by an older device copy.
+    """
     conv = db.scalar(
         select(Conversation)
         .options(selectinload(Conversation.messages))
         .where(Conversation.external_id == external_id)
     )
-    if conv is None:
+    is_new = conv is None
+    if is_new:
         conv = Conversation(external_id=external_id, kind=kind, model=model, title=title)
         db.add(conv)
         db.flush()
-        for role, content, msg_model in messages:
-            db.add(Message(conversation_id=conv.id, role=role, content=content, model=msg_model))
-        return False
+        tombstones = set()
+    else:
+        conv.title = title
+        conv.model = model or conv.model
+        conv.deleted_at = None
+        conv.updated_at = utcnow()
+        tombstones = set(
+            db.execute(
+                select(MessageTombstone.role, MessageTombstone.content).where(
+                    MessageTombstone.conversation_id == conv.id
+                )
+            ).all()
+        )
+        # Drop only the live messages; archived (deleted) ones stay in the DB.
+        for msg in list(conv.messages):
+            if msg.deleted_at is None:
+                db.delete(msg)
+        db.flush()
 
-    conv.title = title
-    conv.model = model or conv.model
-    conv.deleted_at = None
-    conv.updated_at = utcnow()
-    for msg in list(conv.messages):
-        db.delete(msg)
-    db.flush()
     for role, content, msg_model in messages:
+        if (role, content) in tombstones:
+            continue  # deleted from the web — keep it deleted
         db.add(Message(conversation_id=conv.id, role=role, content=content, model=msg_model))
-    return True
+    return not is_new
 
 
 def _parse_since(value: str):

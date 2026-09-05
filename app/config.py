@@ -39,6 +39,11 @@ class Settings(BaseSettings):
     # ("1h"); anything >= 3600 is sent as "1h", otherwise the 5-minute default.
     cache_duration_seconds: int = 3600
 
+    # CORS origins allowed to call the API, comma-separated. "*" (default)
+    # keeps phone/PC clients working over LAN IPs; tighten it (e.g.
+    # "https://chat.example.com") when the server sits behind a real domain.
+    cors_origins: str = "*"
+
 
 @lru_cache
 def get_settings() -> Settings:

@@ -1,9 +1,9 @@
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import func, select
+from sqlalchemy import and_, func, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.database import get_db
-from app.models import AuthToken, Conversation, Message, utcnow
+from app.models import AuthToken, Conversation, Message, MessageTombstone, utcnow
 from app.schemas import (
     ConversationCreate,
     ConversationDetail,
@@ -25,7 +25,13 @@ def list_conversations(db: Session = Depends(get_db), _: AuthToken = Depends(get
             func.count(Message.id),
             func.max(Message.content),
         )
-        .outerjoin(Message, Message.conversation_id == Conversation.id)
+        .outerjoin(
+            Message,
+            and_(
+                Message.conversation_id == Conversation.id,
+                Message.deleted_at.is_(None),
+            ),
+        )
         .where(Conversation.deleted_at.is_(None))
         .group_by(Conversation.id)
         .order_by(Conversation.updated_at.desc())
@@ -68,7 +74,13 @@ def get_conversation(
     _: AuthToken = Depends(get_current_token),
 ) -> ConversationDetail:
     conv = _fetch_conversation(db, conversation_id)
-    return ConversationDetail.model_validate(conv)
+    detail = ConversationDetail.model_validate(conv)
+    # Hide individually deleted Q/A (they stay archived in the DB only).
+    live_ids = {
+        m.id for m in conv.messages if m.deleted_at is None
+    }
+    detail.messages = [m for m in detail.messages if m.id in live_ids]
+    return detail
 
 
 @router.patch("/{conversation_id}", response_model=ConversationDetail)
@@ -97,6 +109,41 @@ def delete_conversation(
     # copy), while the correspondence itself stays archived in the DB.
     conv = _fetch_conversation(db, conversation_id)
     conv.deleted_at = utcnow()
+    conv.updated_at = utcnow()
+    db.commit()
+
+
+@router.delete("/{conversation_id}/messages/{message_id}", status_code=204)
+def delete_message(
+    conversation_id: int,
+    message_id: int,
+    db: Session = Depends(get_db),
+    _: AuthToken = Depends(get_current_token),
+) -> None:
+    """Delete one question/answer inside a dialogue (web UI).
+
+    Soft delete: the text stays archived in the DB (`messages.deleted_at`),
+    and a tombstone records the removal so a later phone push (which always
+    uploads the dialog's full local message list) cannot resurrect it.
+    Other devices drop the message on their next sync pull.
+    """
+    conv = _fetch_conversation(db, conversation_id)
+    msg = db.scalar(
+        select(Message).where(
+            Message.id == message_id,
+            Message.conversation_id == conv.id,
+            Message.deleted_at.is_(None),
+        )
+    )
+    if msg is None:
+        raise HTTPException(status_code=404, detail="Message not found")
+
+    msg.deleted_at = utcnow()
+    db.add(
+        MessageTombstone(
+            conversation_id=conv.id, role=msg.role, content=msg.content
+        )
+    )
     conv.updated_at = utcnow()
     db.commit()
 

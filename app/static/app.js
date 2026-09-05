@@ -382,6 +382,7 @@ function renderMessages(messages) {
 function appendMessage(msg) {
   const div = document.createElement("div");
   div.className = `message ${msg.role}`;
+  div.dataset.messageId = msg.id;
 
   if (msg.model) {
     const modelTag = document.createElement("span");
@@ -403,8 +404,41 @@ function appendMessage(msg) {
   copyBtn.addEventListener("click", () => copyToClipboard(msg.content || "", copyBtn));
   div.appendChild(copyBtn);
 
+  const deleteBtn = document.createElement("button");
+  deleteBtn.type = "button";
+  deleteBtn.className = "message-delete";
+  deleteBtn.title = "Delete this question/answer (archived on the server, removed on all synced devices)";
+  deleteBtn.textContent = "✕ Delete";
+  deleteBtn.addEventListener("click", () => deleteMessage(msg, div));
+  div.appendChild(deleteBtn);
+
   els.messages.appendChild(div);
   scrollToBottom();
+}
+
+/** Delete one question/answer inside the open dialogue. The server archives
+ * the text (soft delete + tombstone) and every synced device — including the
+ * phone — drops it on its next sync. */
+async function deleteMessage(msg, node) {
+  if (!msg.id || !state.currentConversationId) {
+    alert("This message has no id yet — reopen the conversation and try again.");
+    return;
+  }
+  const preview = (msg.content || "").slice(0, 60).replace(/\s+/g, " ");
+  if (!confirm(`Delete this ${msg.role === "user" ? "question" : "answer"}?\n\n"${preview}${(msg.content || "").length > 60 ? "…" : ""}"`)) return;
+  try {
+    await api(`/api/conversations/${state.currentConversationId}/messages/${msg.id}`, {
+      method: "DELETE",
+    });
+    node.remove();
+    const conv = state.conversations.find((c) => c.id === state.currentConversationId);
+    if (conv && typeof conv.message_count === "number") {
+      conv.message_count = Math.max(0, conv.message_count - 1);
+      renderConversationList();
+    }
+  } catch (err) {
+    alert(`Delete failed: ${err.message}`);
+  }
 }
 
 /**
@@ -532,7 +566,7 @@ els.chatForm.addEventListener("submit", async (e) => {
 
     appendMessage(resp.user_message);
     resp.responses.forEach((r) => {
-      if (r.ok) appendMessage({ role: "assistant", content: r.content, model: r.model });
+      if (r.ok) appendMessage({ id: r.message_id ?? null, role: "assistant", content: r.content, model: r.model });
       else appendError(r.model, r.error);
     });
     await loadConversations();

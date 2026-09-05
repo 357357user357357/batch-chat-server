@@ -26,6 +26,9 @@ You asked which tools to use — here is the reasoning behind what's in this rep
 - 📥 **Import API** so you can migrate your existing Android dialogues into the server
 - ✍️ Messages render **Markdown + LaTeX** (`$...$`, `$$...$$`, `\(...\)`, `\[...\]`), and every message has a **Copy** button that copies the raw source (LaTeX included), not the rendered HTML
 - ⚙️ **Settings modal** in the web UI to set OpenRouter/Vertex/Bedrock credentials — saved to the server DB and applied immediately, no SSH or restart needed
+- 🗑️ **Delete any question/answer inside a dialogue** from the web — the text stays archived in the server DB, and every synced device (including the phone) drops it on the next sync
+- 🔁 **Key sync** — OpenRouter/Tavily keys are unified between phone and server (gaps filled both ways, server-first)
+- ⚡ **Flex processing tier** — append `:flex` to any model (e.g. `openai/astra:flex`) for the cheaper `service_tier="flex"` processing; if the provider doesn't serve flex for that model, the server falls back to the standard tier automatically (or run it through the Batch API)
 - ⚙️ Pure vanilla JS UI, works on mobile and desktop
 
 ## Multiple providers (OpenRouter / Vertex AI / Bedrock)
@@ -38,6 +41,7 @@ your own cloud billing) by prefixing the model name in the "Models" picker
 | Prefix | Example | Needs |
 |---|---|---|
 | *(none)* | `anthropic/claude-sonnet-4.5` | `OPENROUTER_API_KEY` |
+| *(none)* + `:flex` | `openai/astra:flex` — Flex processing tier (`service_tier="flex"`, cheaper/slower); auto-falls-back to standard tier when the provider rejects it | `OPENROUTER_API_KEY` |
 | `vertex:` | `vertex:gemini-2.5-flash`, `vertex:claude-sonnet-4-5@20250929` | `GOOGLE_PROJECT_ID` + service-account key |
 | `bedrock:` | `bedrock:anthropic.claude-3-5-sonnet-20241022-v2:0` | `AWS_ACCESS_KEY_ID` + `AWS_SECRET_ACCESS_KEY` |
 
@@ -136,14 +140,14 @@ Interactive docs are available at `/api/docs`.
 
 ### JSONL batch (like GCP Vertex AI / AWS Bedrock — but via OpenRouter)
 
-Yes, **Claude (e.g. `anthropic/claude-fable-5`) is available on Google Vertex AI, AWS Bedrock AND OpenRouter** — this server uses the OpenRouter async Batch API, which is the simplest (no GCS/S3, no IAM) and ~50% cheaper. The server understands the `.jsonl` line formats of all of them:
+Yes, **Claude (e.g. `anthropic/claude-fable-5.1`) is available on Google Vertex AI, AWS Bedrock AND OpenRouter** — this server uses the OpenRouter async Batch API, which is the simplest (no GCS/S3, no IAM) and ~50% cheaper. The server understands the `.jsonl` line formats of all of them:
 
 ```bash
 curl -X POST http://localhost:8000/api/batches \
   -H "Authorization: Bearer <your-token>" \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "anthropic/claude-fable-5:batch",
+    "model": "anthropic/claude-fable-5.1:batch",
     "jsonl": "{\"custom_id\": \"req-1\", \"prompt\": \"Write a haiku\"}\n{\"request\": {\"contents\": [{\"role\": \"user\", \"parts\": [{\"text\": \"Explain REST\"}]}]}}\n{\"recordId\": \"rec-3\", \"modelInput\": {\"messages\": [{\"role\": \"user\", \"content\": \"Say hi\"}]}}\n"
   }'
 ```
@@ -169,7 +173,7 @@ How it works:
    results appear in the normal web UI chat list.
 4. The web UI has an **⚡ Batch** button for pasting JSONL and watching progress.
 
-> ⚠️ Use a Claude `:batch` model for the async Batch API (`anthropic/claude-fable-5:batch`
+> ⚠️ Use a Claude `:batch` model for the async Batch API (`anthropic/claude-fable-5.1:batch`
 > or another `…:batch` model) — this is the ~50%-off path which GCP/AWS roughly
 > correspond to. Regular model ids still work for synchronous chat via `/api/chat/send`.
 
@@ -222,10 +226,17 @@ curl -X POST http://localhost:8000/api/chat/send \
 ## Security notes
 
 - Change `APP_PASSWORD` to something strong.
+- The login endpoint has brute-force protection: after 5 failed attempts the
+  client IP is locked out (30s, doubling up to 15 minutes).
 - The API key never leaves the server.
 - For production, put the app behind a reverse proxy with HTTPS (Caddy is the easiest:
   it auto-provisions Let's Encrypt certificates).
 - Token-based auth: log in once, the browser stores the token in `localStorage`.
+- CORS is configurable via `CORS_ORIGINS` (comma-separated); default `*` keeps
+  phone/PC clients working over LAN IPs — tighten it when behind a real domain.
+- The web UI and API are served over plain HTTP on :8000 by default; sync
+  traffic (dialogs, keys) is only as private as the network between you and
+  the VPS, so the reverse proxy + HTTPS is strongly recommended.
 
 ## Project layout
 

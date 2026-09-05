@@ -57,7 +57,12 @@ def send_chat(
     history: list[tuple[str, str, str | None]] = [
         (m.role, m.content, m.model)
         for m in db.scalars(
-            select(Message).where(Message.conversation_id == conv.id).order_by(Message.id)
+            select(Message)
+            .where(
+                Message.conversation_id == conv.id,
+                Message.deleted_at.is_(None),  # skip individually deleted Q/A
+            )
+            .order_by(Message.id)
         )
     ]
 
@@ -100,6 +105,8 @@ def send_chat(
         except Exception as exc:  # defensive: never crash the whole batch
             return ChatResponseItem(model=model, ok=False, error=f"Unexpected error: {exc}")
 
+    assistant_ids: dict[str, int] = {}
+
     with ThreadPoolExecutor(max_workers=min(len(limit_models), 8)) as pool:
         future_map = {pool.submit(_call, model): model for model in limit_models}
         for future in as_completed(future_map):
@@ -115,10 +122,15 @@ def send_chat(
                     model=item.model,
                 )
                 db.add(assistant_msg)
+                db.flush()
+                assistant_ids[item.model] = assistant_msg.id
     conv.updated_at = utcnow()
     db.commit()
 
     ordered = [responses[m] for m in payload.models if m in responses] or []
+    for item in ordered:
+        # Expose the DB id so the web UI can delete a fresh answer right away
+        item.message_id = assistant_ids.get(item.model)
     return ChatResponse(
         conversation_id=conv.id,
         conversation_title=conv.title,
