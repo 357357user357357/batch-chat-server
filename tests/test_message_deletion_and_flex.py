@@ -335,9 +335,9 @@ def test_chat_completion_sends_base_model_for_plain_models(monkeypatch):
 # Cache keep-alive (cheap 1-hour TTL extension via near-empty pings)
 # ---------------------------------------------------------------------------
 
-def test_cache_keeper_pings_due_conversations(monkeypatch):
-    """After the keep-alive window elapses, entries are dropped; due models get
-    exactly one near-empty ping that reuses the registered system prompt."""
+def test_cache_keeper_pings_only_enabled_conversations(monkeypatch):
+    """Warm-up is opt-in: a recorded but NOT enabled dialog is never pinged;
+    enabling via the 🔥 Cache toggle starts the pings."""
     from app.services import cache_keeper
     from app.config import settings as app_settings
 
@@ -360,7 +360,7 @@ def test_cache_keeper_pings_due_conversations(monkeypatch):
     monkeypatch.setattr(
         cache_keeper.time, "time", lambda: old_now() - 46 * 60, raising=False
     )
-    cache_keeper.touch(
+    cache_keeper.record(
         conv["id"],
         "TEST SYSTEM PROMPT",
         ["openai/gpt-4o-mini", "openai/gpt-4o-mini", "anthropic/claude-fable-5.1:batch"],
@@ -375,6 +375,13 @@ def test_cache_keeper_pings_due_conversations(monkeypatch):
 
     monkeypatch.setattr(cache_keeper, "PING_INTERVAL_SECONDS", 60)
     monkeypatch.setattr("app.services.openrouter.chat_completion", fake_completion)
+
+    # Not enabled → no pings (warm-up is opt-in per dialog).
+    cache_keeper._tick()
+    assert len(pings) == 0
+
+    # 🔥 Cache toggle ON → due models get exactly one ping each cycle.
+    cache_keeper.set_enabled(conv["id"], True)
     cache_keeper._tick()
 
     # ":batch" model is skipped (async-only id); the plain model got one ping.
@@ -382,7 +389,7 @@ def test_cache_keeper_pings_due_conversations(monkeypatch):
     ping = pings[0]
     assert ping["model"] == "openai/gpt-4o-mini"
     assert ping["max_tokens"] == cache_keeper.PING_MAX_TOKENS
-    # Exact registered system prompt + stored history + the "." keep-alive turn
+    # Exact recorded system prompt + stored history + the "." keep-alive turn
     assert ping["messages"][0] == {"role": "system", "content": "TEST SYSTEM PROMPT"}
     assert ping["messages"][-1] == {"role": "user", "content": "."}
     assert any(m["content"] == "keeper question" for m in ping["messages"])
@@ -398,6 +405,32 @@ def test_cache_keeper_pings_due_conversations(monkeypatch):
     cache_keeper._tick()
     assert len(pings) == 1
     cache_keeper.reset_for_tests()
+
+
+def test_keepalive_toggle_endpoint():
+    """The 🔥 Cache toggle persists per dialog and is reported on fetch."""
+    headers = auth_headers()
+    conv = client.post("/api/conversations", headers=headers, json={"title": "ka toggle"}).json()
+
+    resp = client.post(
+        f"/api/conversations/{conv['id']}/keepalive",
+        headers=headers,
+        json={"enabled": True},
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["keepalive"] is True
+
+    detail = client.get(f"/api/conversations/{conv['id']}", headers=headers).json()
+    assert detail["keepalive"] is True
+
+    resp = client.post(
+        f"/api/conversations/{conv['id']}/keepalive",
+        headers=headers,
+        json={"enabled": False},
+    )
+    assert resp.json()["keepalive"] is False
+    detail = client.get(f"/api/conversations/{conv['id']}", headers=headers).json()
+    assert detail["keepalive"] is False
 
 
 def test_cache_keeper_pings_flex_models_with_suffix(monkeypatch):
@@ -422,7 +455,8 @@ def test_cache_keeper_pings_flex_models_with_suffix(monkeypatch):
         return "."
 
     monkeypatch.setattr("app.services.openrouter.chat_completion", fake_completion)
-    cache_keeper.touch(conv["id"], "FLEX SYSTEM", [flex_model])
+    cache_keeper.record(conv["id"], "FLEX SYSTEM", [flex_model])
+    cache_keeper.set_enabled(conv["id"], True)
     cache_keeper._tick()
 
     assert len(pings) == 1
@@ -431,7 +465,8 @@ def test_cache_keeper_pings_flex_models_with_suffix(monkeypatch):
 
 
 def test_cache_keeper_disabled_without_1h_cache(monkeypatch):
-    """touch() is a no-op when the cache TTL is the 5-minute one."""
+    """record() alone never registers for pings when the cache TTL is the
+    5-minute one (a 45-min ping could never hit it anyway)."""
     from app.services import cache_keeper
     from app.config import settings as app_settings
 
@@ -439,6 +474,6 @@ def test_cache_keeper_disabled_without_1h_cache(monkeypatch):
     monkeypatch.setattr(app_settings, "cache_duration_seconds", 300)
     monkeypatch.setattr(app_settings, "cache_keepalive_hours", 3)
 
-    cache_keeper.touch(999999, "SYSTEM", ["openai/gpt-4o-mini"])
+    cache_keeper.record(999999, "SYSTEM", ["openai/gpt-4o-mini"])
     assert 999999 not in cache_keeper._entries
     cache_keeper.reset_for_tests()

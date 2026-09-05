@@ -36,14 +36,38 @@ _lock = threading.Lock()
 # conversation_id -> {"system": str, "models": [str], "last_activity": float,
 #                     "last_ping": {model: float}}
 _entries: dict[int, dict] = {}
+# conversation_ids the user explicitly enabled via the 🔥 Cache toggle —
+# only these are ever pinged. Persisted in app_settings by the router.
+_enabled: set[int] = set()
 _thread: threading.Thread | None = None
 
 
-def touch(conversation_id: int, system: str, models: list[str]) -> None:
-    """Register a real request so its cache gets kept warm.
+def set_enabled(conversation_id: int, enabled: bool) -> None:
+    """Turn keep-alive warming on/off for one conversation (user toggle)."""
+    with _lock:
+        if enabled:
+            _enabled.add(conversation_id)
+        else:
+            _enabled.discard(conversation_id)
+            _entries.pop(conversation_id, None)
+    logger.info("Keep-alive %s for conv=%s", "ENABLED" if enabled else "disabled", conversation_id)
 
-    Only meaningful when a 1-hour cache is configured; with the 5-minute TTL
-    the 45-minute ping interval could never hit, so we don't even track.
+
+def restore_enabled(ids: list[int]) -> None:
+    """Re-apply the enabled set after a restart (loaded from app_settings)."""
+    with _lock:
+        _enabled.update(int(i) for i in ids)
+
+
+def _is_enabled(conversation_id: int) -> bool:
+    return conversation_id in _enabled
+
+
+def record(conversation_id: int, system: str, models: list[str]) -> None:
+    """Register the exact prefix of a real request (system + models).
+
+    Recording alone never pings — warming happens only for conversations the
+    user explicitly enabled via the 🔥 Cache toggle (see set_enabled).
     """
     if settings.cache_keepalive_hours <= 0 or settings.cache_duration_seconds < 3600:
         return
@@ -62,7 +86,13 @@ def touch(conversation_id: int, system: str, models: list[str]) -> None:
         entry["system"] = system
         entry["models"] = usable
         entry["last_activity"] = now
-    logger.info("Keep-alive registered conv=%s models=%s", conversation_id, usable)
+    if _is_enabled(conversation_id):
+        logger.info("Keep-alive (enabled) registered conv=%s models=%s", conversation_id, usable)
+
+
+# Alias: every real request RECORDS its exact prefix (so warming can be
+# enabled later), but only explicitly enabled conversations are ever pinged.
+touch = record
 
 
 def start_cache_keeper() -> None:
@@ -93,6 +123,8 @@ def _tick() -> None:
     with _lock:
         due: list[tuple[int, str]] = []
         for conversation_id, entry in list(_entries.items()):
+            if conversation_id not in _enabled:
+                continue  # warming is opt-in per dialog (🔥 Cache toggle)
             if now - entry["last_activity"] > window:
                 del _entries[conversation_id]  # window over — let the cache expire
                 continue
@@ -152,3 +184,4 @@ def _ping(conversation_id: int, model: str) -> None:
 def reset_for_tests() -> None:
     with _lock:
         _entries.clear()
+        _enabled.clear()

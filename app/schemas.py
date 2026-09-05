@@ -36,6 +36,8 @@ class ConversationDetail(BaseModel):
     title: str
     created_at: datetime | None = None
     updated_at: datetime | None = None
+    # 🔥 Cache keep-alive toggle state (web UI button)
+    keepalive: bool = False
     messages: list[MessageOut]
 
 
@@ -51,6 +53,10 @@ class MessageCreate(BaseModel):
     role: str = Field(pattern="^(user|assistant|system)$")
     content: str
     model: str | None = None
+
+
+class KeepaliveToggle(BaseModel):
+    enabled: bool
 
 
 class LoginRequest(BaseModel):

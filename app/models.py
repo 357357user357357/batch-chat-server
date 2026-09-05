@@ -47,6 +47,9 @@ class Conversation(Base):
     # Soft-delete tombstone: kept (instead of a hard delete) so other devices
     # can be told "this dialog was deleted" the next time they sync.
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
+    # Prompt-cache keep-alive toggle (🔥 Cache button in the web UI): when on,
+    # the keeper sends near-empty pings for this dialog's cached prefix.
+    keepalive_enabled: Mapped[bool] = mapped_column(default=False)
 
     messages: Mapped[list["Message"]] = relationship(
         back_populates="conversation",

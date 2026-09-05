@@ -58,6 +58,7 @@ const els = {
   importSubmit: $("#import-submit"),
   batchBtn: $("#batch-btn"),
   batchBadge: $("#batch-badge"),
+  cacheBtn: $("#cache-btn"),
   batchModal: $("#batch-modal"),
   batchClose: $("#batch-close"),
   batchModel: $("#batch-model"),
@@ -457,6 +458,10 @@ async function openConversation(id) {
   state.currentConversationId = id;
   const conv = await api(`/api/conversations/${id}`);
   els.chatTitle.textContent = conv.title;
+  els.cacheBtn.classList.toggle("active", !!conv.keepalive);
+  els.cacheBtn.title = conv.keepalive
+    ? "🔥 Cache keep-alive is ON for this dialog (pings every 45 min). Click to stop."
+    : "🔥 Cache keep-alive is OFF. Click to warm this dialog's prompt cache every 45 min.";
   renderMessages(conv.messages);
   renderConversationList();
 }
@@ -476,6 +481,7 @@ els.newChatBtn.addEventListener("click", async () => {
   els.chatTitle.textContent = conv.title;
   els.messages.innerHTML = "";
   state.currentConversationId = conv.id;
+  els.cacheBtn.classList.remove("active"); // new dialog: warming starts OFF
   els.chatInput.focus();
 });
 
@@ -655,6 +661,32 @@ function scrollToBottom() {
 els.webSearchToggle.checked = localStorage.getItem("bc_web_search") !== "0";
 els.webSearchToggle.addEventListener("change", () => {
   localStorage.setItem("bc_web_search", els.webSearchToggle.checked ? "1" : "0");
+});
+
+// ---------------------------------------------------------------
+// 🔥 Cache keep-alive toggle (per open dialog, opt-in)
+// ---------------------------------------------------------------
+els.cacheBtn.addEventListener("click", async () => {
+  if (!state.currentConversationId) {
+    alert("Open a dialog first — the 🔥 Cache button warms the open dialog's prompt cache.");
+    return;
+  }
+  const enable = !els.cacheBtn.classList.contains("active");
+  els.cacheBtn.disabled = true;
+  try {
+    const resp = await api(`/api/conversations/${state.currentConversationId}/keepalive`, {
+      method: "POST",
+      body: JSON.stringify({ enabled: enable }),
+    });
+    els.cacheBtn.classList.toggle("active", !!resp.keepalive);
+    els.cacheBtn.title = resp.keepalive
+      ? "🔥 Cache keep-alive is ON for this dialog (pings every 45 min). Click to stop."
+      : "🔥 Cache keep-alive is OFF. Click to warm this dialog's prompt cache every 45 min.";
+  } catch (err) {
+    alert(`Cache toggle failed: ${err.message}`);
+  } finally {
+    els.cacheBtn.disabled = false;
+  }
 });
 
 // ---------------------------------------------------------------

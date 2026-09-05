@@ -1,18 +1,22 @@
+import json
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import and_, func, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.database import get_db
-from app.models import AuthToken, Conversation, Message, MessageTombstone, utcnow
+from app.models import AppSetting, AuthToken, Conversation, Message, MessageTombstone, utcnow
 from app.schemas import (
     ConversationCreate,
     ConversationDetail,
     ConversationRename,
     ConversationSummary,
+    KeepaliveToggle,
     MessageCreate,
     MessageOut,
 )
 from app.security import get_current_token
+from app.services import cache_keeper
 
 router = APIRouter(prefix="/api/conversations", tags=["conversations"])
 
@@ -75,6 +79,7 @@ def get_conversation(
 ) -> ConversationDetail:
     conv = _fetch_conversation(db, conversation_id)
     detail = ConversationDetail.model_validate(conv)
+    detail.keepalive = bool(conv.keepalive_enabled)
     # Hide individually deleted Q/A (they stay archived in the DB only).
     live_ids = {
         m.id for m in conv.messages if m.deleted_at is None
@@ -166,6 +171,43 @@ def add_message(
     db.commit()
     db.refresh(msg)
     return MessageOut.model_validate(msg)
+
+
+@router.post("/{conversation_id}/keepalive")
+def toggle_keepalive(
+    conversation_id: int,
+    payload: KeepaliveToggle,
+    db: Session = Depends(get_db),
+    _: AuthToken = Depends(get_current_token),
+) -> dict:
+    """🔥 Cache toggle: enable/disable prompt-cache warm-up for one dialog.
+
+    When enabled, the background keeper pings this dialog's cached prefix
+    (near-empty requests every 45 min) for the configured keep-alive window.
+    The flag is persisted, so it survives server restarts.
+    """
+    conv = _fetch_conversation(db, conversation_id)
+    conv.keepalive_enabled = payload.enabled
+    conv.updated_at = utcnow()
+    cache_keeper.set_enabled(conv.id, payload.enabled)
+
+    # Persist the enabled set so it survives restarts.
+    ids = [
+        row[0]
+        for row in db.execute(
+            select(Conversation.id).where(Conversation.keepalive_enabled.is_(True))
+        ).all()
+        if row[0] != conv.id or payload.enabled
+    ]
+    if payload.enabled and conv.id not in ids:
+        ids.append(conv.id)
+    row = db.get(AppSetting, "keepalive_conversation_ids")
+    if row is None:
+        row = AppSetting(key="keepalive_conversation_ids", value="")
+        db.add(row)
+    row.value = json.dumps(sorted(set(ids)))
+    db.commit()
+    return {"ok": True, "keepalive": conv.keepalive_enabled}
 
 
 def _fetch_conversation(db: Session, conversation_id: int) -> Conversation:

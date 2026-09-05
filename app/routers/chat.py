@@ -176,12 +176,12 @@ def send_chat(
     for item in ordered:
         # Expose the DB id so the web UI can delete a fresh answer right away
         item.message_id = assistant_ids.get(item.model)
-    # Register the conversation for cache keep-alive (exact system prompt +
-    # answered models), so the 1-hour cache stays cheap for hours longer.
+    # Record the exact prefix of this request so warming can be enabled for
+    # this dialog later via the 🔥 Cache toggle (no automatic pings).
     ok_models = [i.model for i in ordered if i.ok]
     if ok_models:
         try:
-            cache_keeper.touch(conv.id, system, ok_models)
+            cache_keeper.record(conv.id, system, ok_models)
         except Exception:  # keep-alive must never break the chat
             pass
     return ChatResponse(

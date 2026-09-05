@@ -16,6 +16,7 @@ logging.basicConfig(
     format="%(levelname)s:%(name)s:%(message)s",
 )
 from app.routers import auth, batches, chat, conversations, import_conversations, settings as settings_router, sync
+from app.services import cache_keeper
 from app.services.batch_worker import start_batch_worker
 from app.services.cache_keeper import start_cache_keeper
 from app.services.settings_store import load_overrides
@@ -40,6 +41,8 @@ def _run_migrations() -> None:
         msg_existing = {col["name"] for col in inspector.get_columns("messages")}
         if "deleted_at" not in msg_existing:
             conn.execute(text("ALTER TABLE messages ADD COLUMN deleted_at DATETIME"))
+        if "keepalive_enabled" not in existing:
+            conn.execute(text("ALTER TABLE conversations ADD COLUMN keepalive_enabled BOOLEAN DEFAULT 0"))
 
 
 Base.metadata.create_all(bind=engine)
@@ -48,6 +51,19 @@ _run_migrations()
 _db = SessionLocal()
 try:
     load_overrides(_db)
+    # Restore the 🔥 Cache keep-alive toggles the user enabled before a restart.
+    try:
+        import json as _json
+
+        from sqlalchemy import select as _select
+
+        from app.models import AppSetting
+
+        _row = _db.get(AppSetting, "keepalive_conversation_ids")
+        if _row and _row.value:
+            cache_keeper.restore_enabled(_json.loads(_row.value))
+    except Exception:
+        pass  # a lost toggle only means cold caches, never broken startup
 finally:
     _db.close()
 
