@@ -1,3 +1,4 @@
+import logging
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -7,6 +8,13 @@ from sqlalchemy import inspect, text
 
 from app.config import settings
 from app.database import Base, SessionLocal, engine
+
+# Make app-level INFO logs (cache keeper pings, batch worker, …) visible in
+# `docker logs` alongside uvicorn's own output.
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(levelname)s:%(name)s:%(message)s",
+)
 from app.routers import auth, batches, chat, conversations, import_conversations, settings as settings_router, sync
 from app.services.batch_worker import start_batch_worker
 from app.services.cache_keeper import start_cache_keeper

@@ -62,6 +62,7 @@ def touch(conversation_id: int, system: str, models: list[str]) -> None:
         entry["system"] = system
         entry["models"] = usable
         entry["last_activity"] = now
+    logger.info("Keep-alive registered conv=%s models=%s", conversation_id, usable)
 
 
 def start_cache_keeper() -> None:
