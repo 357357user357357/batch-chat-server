@@ -250,6 +250,8 @@ function renderModelCheckboxes() {
     const cb = document.createElement("input");
     if (state.chatMode === "live") {
       // Live chat: single choice, like the phone app's chat tab.
+      // ":batch" ids are async-only — they can't answer a live request.
+      if (model.endsWith(":batch")) return;
       cb.type = "radio";
       cb.name = "live-model";
       cb.checked = model === state.liveModel;
