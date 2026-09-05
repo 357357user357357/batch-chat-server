@@ -45,10 +45,15 @@
     <main class="chat-main">
       <header class="chat-header">
         <h3 id="chat-title">Select a conversation</h3>
-        <div class="model-picker" id="model-picker">
+        <div class="chat-header-controls">
+          <div class="mode-toggle" id="mode-toggle" title="Live: one model answers instantly. Batch: every selected model answers in parallel.">
+            <button type="button" id="mode-live-btn" class="mode-btn" title="Live chat — one model answers right away">💬 Live</button>
+            <button type="button" id="mode-batch-btn" class="mode-btn" title="Batch chat — all selected models answer in parallel">⚡ Batch</button>
+          </div>
+          <div class="model-picker" id="model-picker">
           <button id="model-picker-btn" class="btn btn-ghost btn-small" title="Choose models">Models</button>
           <div id="model-dropdown" class="model-dropdown hidden">
-            <p class="dropdown-hint">Send each message to these models in parallel:</p>
+            <p class="dropdown-hint" id="model-dropdown-hint">Answer with this model (Live):</p>
             <div id="model-checkboxes"></div>
             <label class="model-custom">
               Custom model:

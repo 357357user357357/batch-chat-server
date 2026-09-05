@@ -12,6 +12,9 @@ const state = {
   currentConversationId: null,
   defaultModels: [],
   selectedModels: JSON.parse(localStorage.getItem("bc_models") || "null"),
+  // "live" = one model answers instantly; "batch" = every selected model answers in parallel
+  chatMode: localStorage.getItem("bc_chat_mode") === "batch" ? "batch" : "live",
+  liveModel: localStorage.getItem("bc_live_model") || null,
   sending: false,
   batches: [],
   batchRefreshTimer: null,
@@ -34,6 +37,9 @@ const els = {
   sendBtn: $("#send-btn"),
   webSearchToggle: $("#web-search-toggle"),
   modelPickerBtn: $("#model-picker-btn"),
+  modelDropdownHint: $("#model-dropdown-hint"),
+  modeLiveBtn: $("#mode-live-btn"),
+  modeBatchBtn: $("#mode-batch-btn"),
   modelDropdown: $("#model-dropdown"),
   modelCheckboxes: $("#model-checkboxes"),
   customModelInput: $("#custom-model-input"),
@@ -190,7 +196,14 @@ async function loadModels() {
       state.selectedModels = state.defaultModels.slice(0, 3);
       saveModels();
     }
-    renderModelCheckboxes();
+    // Pick a sensible default live model once (first batch entry may be a
+    // ":batch" async model — prefer a non-batch id for live chat).
+    if (!state.liveModel) {
+      const nonBatch = state.defaultModels.find((m) => !m.includes(":batch"));
+      state.liveModel = nonBatch || state.selectedModels[0] || state.defaultModels[0] || null;
+      saveChatMode();
+    }
+    applyChatMode();
   } catch { /* ignore */ }
 }
 
@@ -198,15 +211,58 @@ function saveModels() {
   localStorage.setItem("bc_models", JSON.stringify(state.selectedModels));
 }
 
+// ---------------------------------------------------------------
+// Live vs Batch chat mode (mirrors the Android app's two tabs)
+// ---------------------------------------------------------------
+function saveChatMode() {
+  localStorage.setItem("bc_chat_mode", state.chatMode);
+  localStorage.setItem("bc_live_model", state.liveModel || "");
+}
+
+function applyChatMode() {
+  els.modeLiveBtn.classList.toggle("active", state.chatMode === "live");
+  els.modeBatchBtn.classList.toggle("active", state.chatMode === "batch");
+  els.modelDropdownHint.textContent = state.chatMode === "live"
+    ? "Answer with this model (Live):"
+    : "Send each message to these models in parallel:";
+  els.modelPickerBtn.textContent = state.chatMode === "live" ? "Model" : "Models";
+  renderModelCheckboxes();
+}
+
+els.modeLiveBtn.addEventListener("click", () => {
+  state.chatMode = "live";
+  saveChatMode();
+  applyChatMode();
+});
+
+els.modeBatchBtn.addEventListener("click", () => {
+  state.chatMode = "batch";
+  saveChatMode();
+  applyChatMode();
+});
+
 function renderModelCheckboxes() {
   els.modelCheckboxes.innerHTML = "";
   state.defaultModels.forEach((model) => {
     const label = document.createElement("label");
     label.className = "model-check";
     const cb = document.createElement("input");
-    cb.type = "checkbox";
-    cb.checked = (state.selectedModels || []).includes(model);
-    cb.addEventListener("change", () => toggleModel(model, cb.checked));
+    if (state.chatMode === "live") {
+      // Live chat: single choice, like the phone app's chat tab.
+      cb.type = "radio";
+      cb.name = "live-model";
+      cb.checked = model === state.liveModel;
+      cb.addEventListener("change", () => {
+        state.liveModel = model;
+        saveChatMode();
+        renderModelCheckboxes();
+      });
+    } else {
+      // Batch chat: any number of models in parallel.
+      cb.type = "checkbox";
+      cb.checked = (state.selectedModels || []).includes(model);
+      cb.addEventListener("change", () => toggleModel(model, cb.checked));
+    }
     label.append(cb, model);
     els.modelCheckboxes.appendChild(label);
   });
@@ -233,10 +289,15 @@ els.addModelBtn.addEventListener("click", () => {
   const custom = els.customModelInput.value.trim();
   if (!custom) return;
   if (!state.defaultModels.includes(custom)) state.defaultModels.push(custom);
-  if (!state.selectedModels.includes(custom)) state.selectedModels.push(custom);
+  if (state.chatMode === "live") {
+    state.liveModel = custom;
+    saveChatMode();
+  } else {
+    if (!state.selectedModels.includes(custom)) state.selectedModels.push(custom);
+    saveModels();
+  }
   els.customModelInput.value = "";
   renderModelCheckboxes();
-  saveModels();
 });
 
 // ---------------------------------------------------------------
@@ -538,8 +599,18 @@ els.chatForm.addEventListener("submit", async (e) => {
   if (state.sending) return;
   const text = els.chatInput.value.trim();
   if (!text) return;
-  if (!state.selectedModels || !state.selectedModels.length) {
-    alert("Select at least one model in the Models dropdown.");
+  const liveModel = state.liveModel
+    || (state.selectedModels || [])[0]
+    || state.defaultModels[0]
+    || null;
+  // Live chat → one model; batch chat → all selected models in parallel.
+  const models = state.chatMode === "live"
+    ? [liveModel]
+    : (state.selectedModels || []);
+  if (!models.length || !models[0]) {
+    alert(state.chatMode === "live"
+      ? "Pick a model in the Model dropdown first."
+      : "Select at least one model in the Models dropdown.");
     return;
   }
 
@@ -552,7 +623,7 @@ els.chatForm.addEventListener("submit", async (e) => {
       method: "POST",
       body: JSON.stringify({
         user_message: text,
-        models: state.selectedModels,
+        models,
         conversation_id: state.currentConversationId,
         web_search: els.webSearchToggle.checked,
       }),
@@ -571,7 +642,7 @@ els.chatForm.addEventListener("submit", async (e) => {
     });
     await loadConversations();
   } catch (err) {
-    appendError(state.selectedModels.join(", "), err.message);
+    appendError(models.join(", "), err.message);
   } finally {
     state.sending = false;
     els.sendBtn.disabled = false;
