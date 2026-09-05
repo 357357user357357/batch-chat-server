@@ -193,15 +193,37 @@ async function loadModels() {
   try {
     const data = await api("/api/chat/models");
     state.defaultModels = data.default_models || [];
+    const batchChatDefault = () => {
+      // Batch chat default: Fable 5.1 (sync id — the :batch variant of the
+      // default belongs to the async ⚡ JSONL batch modal).
+      const b = (data.default_batch_model || "").replace(/:batch$/, "");
+      return b && state.defaultModels.includes(b) ? b : state.defaultModels[0];
+    };
+
+    // One-time cleanup: the default model list was trimmed — drop saved
+    // selections that no longer exist (custom models added afterwards stay).
+    if (!localStorage.getItem("bc_models_pruned_v2")) {
+      const known = new Set(state.defaultModels);
+      state.selectedModels = (state.selectedModels || []).filter((m) => known.has(m));
+      if (!state.selectedModels.length) state.selectedModels = [batchChatDefault()];
+      if (!state.liveModel || !known.has(state.liveModel) || state.liveModel.endsWith(":batch")) {
+        state.liveModel = data.default_live_model || state.defaultModels.find((m) => !m.includes(":batch")) || state.defaultModels[0] || null;
+      }
+      localStorage.setItem("bc_models_pruned_v2", "1");
+      saveModels();
+      saveChatMode();
+    }
+
     if (!state.selectedModels || !state.selectedModels.length) {
-      state.selectedModels = state.defaultModels.slice(0, 3);
+      state.selectedModels = [batchChatDefault()];
       saveModels();
     }
-    // Pick a sensible default live model once (first batch entry may be a
-    // ":batch" async model — prefer a non-batch id for live chat).
+    // Default live model: DeepSeek v4 flash (latest).
     if (!state.liveModel) {
-      const nonBatch = state.defaultModels.find((m) => !m.includes(":batch"));
-      state.liveModel = nonBatch || state.selectedModels[0] || state.defaultModels[0] || null;
+      state.liveModel = data.default_live_model
+        || state.defaultModels.find((m) => !m.includes(":batch"))
+        || state.defaultModels[0]
+        || null;
       saveChatMode();
     }
     applyChatMode();

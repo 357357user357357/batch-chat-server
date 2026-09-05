@@ -17,6 +17,7 @@ from app.schemas import (
 from app.security import get_current_token
 from app.services import cache_keeper, tavily
 from app.services.providers import ProviderError, chat_completion, default_models
+from app.services import openrouter
 
 router = APIRouter(prefix="/api/chat", tags=["chat"])
 
@@ -41,7 +42,11 @@ def system_prompt_with_current_time(user_system: str | None) -> str:
 
 @router.get("/models")
 def available_models() -> dict:
-    return {"default_models": default_models()}
+    return {
+        "default_models": default_models(),
+        "default_live_model": openrouter.DEFAULT_LIVE_MODEL,
+        "default_batch_model": openrouter.DEFAULT_BATCH_MODEL,
+    }
 
 
 @router.post("/send", response_model=ChatResponse)

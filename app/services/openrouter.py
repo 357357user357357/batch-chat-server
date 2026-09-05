@@ -25,20 +25,18 @@ BATCH_ERROR_STATUSES = frozenset({"failed", "expired", "cancelled"})
 # Keeping tiers as plain suffixes means any future model works with zero code
 # changes: just type "vendor/new-model:flex" in the picker.
 DEFAULT_MODELS = [
+    "z-ai/glm-5.3",
+    "z-ai/glm-5.3-flash",
     "openai/gpt-6-astra",
     "openai/gpt-6-astra:flex",
+    "~deepseek/deepseek-v4-flash-latest",
     "anthropic/claude-fable-5.1",
     "anthropic/claude-fable-5.1:batch",
-    "deepseek/deepseek-v4-flash-0731",
-    "deepseek/deepseek-chat",
-    "openai/gpt-4o-mini",
-    "openai/gpt-4.1",
-    "anthropic/claude-haiku-4.5",
-    "anthropic/claude-sonnet-4.5",
-    "google/gemini-2.5-flash",
-    "meta-llama/llama-3.3-70b-instruct",
-    "openrouter/auto",
 ]
+
+# Defaults per mode: DeepSeek v4 flash (latest) answers live chats; Fable 5.1
+# runs the batch chats (the ⚡ JSONL batch modal defaults to its :batch id).
+DEFAULT_LIVE_MODEL = "~deepseek/deepseek-v4-flash-latest"
 
 # Default batch model: discounted async Batch API (≈50% of model price)
 DEFAULT_BATCH_MODEL = "anthropic/claude-fable-5.1:batch"
