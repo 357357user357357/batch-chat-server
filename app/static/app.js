@@ -55,6 +55,7 @@ const els = {
   importStatus: $("#import-status"),
   importSubmit: $("#import-submit"),
   batchBtn: $("#batch-btn"),
+  batchBadge: $("#batch-badge"),
   batchModal: $("#batch-modal"),
   batchClose: $("#batch-close"),
   batchModel: $("#batch-model"),
@@ -155,6 +156,11 @@ function showApp() {
   loadModels();
   loadConversations();
   checkHealth();
+  loadBatches().catch(() => {});
+  // Keep the 🧾 JSONL badge fresh even with no jobs in flight.
+  if (!state.batchBadgeTimer) {
+    state.batchBadgeTimer = setInterval(() => loadBatches().catch(() => {}), 60000);
+  }
 }
 
 function showLogin() {
@@ -834,10 +840,11 @@ async function loadBatches() {
     state.batches = [];
   }
   renderBatchJobs();
-  const active = state.batches.some(
-    (b) => b.status !== "completed" && b.status !== "failed" &&
-           b.status !== "expired" && b.status !== "cancelled" && b.status !== "error"
-  );
+  const isActive = (b) =>
+    b.status !== "completed" && b.status !== "failed" &&
+    b.status !== "expired" && b.status !== "cancelled" && b.status !== "error";
+  updateBatchBadge(state.batches.filter(isActive).length);
+  const active = state.batches.some(isActive);
   if (active) {
     // Keep refreshing while jobs are in flight, and pull in new conversations.
     if (!state.batchRefreshTimer) {
@@ -849,6 +856,17 @@ async function loadBatches() {
   } else if (state.batchRefreshTimer) {
     clearInterval(state.batchRefreshTimer);
     state.batchRefreshTimer = null;
+  }
+}
+
+/** Small counter on the 🧾 JSONL button showing in-flight batch jobs. */
+function updateBatchBadge(count) {
+  if (!els.batchBadge) return;
+  if (count > 0) {
+    els.batchBadge.textContent = String(count);
+    els.batchBadge.classList.remove("hidden");
+  } else {
+    els.batchBadge.classList.add("hidden");
   }
 }
 

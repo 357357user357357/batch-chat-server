@@ -248,6 +248,21 @@ input:focus, textarea:focus { outline: 2px solid var(--accent); outline-offset: 
   color: #fff;
 }
 
+.batch-badge {
+  display: inline-block;
+  min-width: 16px;
+  margin-left: 5px;
+  padding: 0 5px;
+  border-radius: 9px;
+  background: #3a2f66;
+  border: 1px solid #4a3d80;
+  color: #c9b8ff;
+  font-size: 10px;
+  line-height: 15px;
+  text-align: center;
+  vertical-align: 1px;
+}
+
 @media (max-width: 720px) {
   .chat-header { flex-wrap: wrap; gap: 8px; }
 }
