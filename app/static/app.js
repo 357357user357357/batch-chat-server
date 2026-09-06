@@ -1350,9 +1350,12 @@ async function loadAccount() {
   // Account list (ids + labels only, no secrets).
   try {
     const rows = await api("/api/auth/accounts");
-    if (rows.length > 1) {
+    if (rows.length > 0) {
       els.accountList.textContent =
-        "Accounts: " + rows.map((a) => a.label ? `${a.id} (${a.label})` : a.id).join(", ");
+        "Accounts: " +
+        rows
+          .map((a) => (a.label ? `${a.account_id} (${a.label})` : a.account_id))
+          .join(", ");
     } else {
       els.accountList.textContent = "";
     }
