@@ -19,7 +19,7 @@ never removed from the master DB; they are the archive.
 from collections import Counter
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
@@ -94,6 +94,7 @@ def pull(
                 if deleted
                 else [
                     SyncMessage(
+                        id=m.id,
                         role=m.role,
                         content=m.content,
                         model=m.model,
@@ -268,6 +269,51 @@ def _utc(dt: datetime | None) -> datetime | None:
     """Attach UTC so pydantic serializes ...+00:00 (clients parse it as a real
     UTC instant; naive strings were being misread as local time)."""
     return dt.replace(tzinfo=timezone.utc) if dt else None
+
+
+@router.delete("/dialogs/{external_id}/messages/{message_id}")
+def delete_synced_message(
+    external_id: str,
+    message_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+    _: AuthToken = Depends(get_current_token),
+) -> dict:
+    """Delete one Q/A from a synced dialog (phone UI).
+
+    Works by external_id (the id the phone already knows — its local dialog id
+    or the srv-… id from pull). Soft delete + tombstone, same as the web
+    endpoint: the text stays archived, other devices drop it on their next
+    sync, and pushes can never resurrect it.
+    """
+    device = device_label(request)
+    conv = db.scalar(
+        select(Conversation).where(
+            Conversation.external_id == external_id,
+            Conversation.deleted_at.is_(None),
+        )
+    )
+    if conv is None:
+        raise HTTPException(status_code=404, detail="Dialog not found")
+    msg = db.scalar(
+        select(Message).where(
+            Message.id == message_id,
+            Message.conversation_id == conv.id,
+            Message.deleted_at.is_(None),
+        )
+    )
+    if msg is None:
+        raise HTTPException(status_code=404, detail="Message not found")
+
+    msg.deleted_at = utcnow()
+    msg.deleted_by = device
+    db.add(MessageTombstone(
+        conversation_id=conv.id, role=msg.role, content=msg.content,
+        deleted_by=device,
+    ))
+    conv.updated_at = utcnow()
+    db.commit()
+    return {"ok": True}
 
 
 def _parse_since(value: str):

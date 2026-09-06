@@ -932,3 +932,50 @@ def test_sync_push_append_only_even_with_future_stamp(monkeypatch):
         conn.execute("DELETE FROM message_tombstones WHERE conversation_id=?", (conv_id,))
         conn.execute("DELETE FROM messages WHERE conversation_id=?", (conv_id,))
         conn.execute("DELETE FROM conversations WHERE id=?", (conv_id,))
+
+
+def test_sync_message_delete_endpoint():
+    """Phone deletion by external_id: tombstones the message server-side,
+    excludes it from pulls, records deleted_by, and survives stale pushes."""
+    headers = auth_headers()
+    phone_headers = {**headers, "X-Device-Name": "test-phone"}
+
+    assert client.post("/api/sync/push", headers=phone_headers, json={
+        "dialogs": [{"id": "phone-del-dlg", "title": "PhDel", "model": "m",
+                     "messages": [{"role": "user", "content": "keep"},
+                                  {"role": "assistant", "content": "drop"}]}],
+        "batches": [], "deleted_external_ids": [], "keys": {}}).status_code == 200
+
+    pulled = client.get("/api/sync/pull", headers=headers).json()["conversations"]
+    dlg = next(c for c in pulled if c["external_id"] == "phone-del-dlg")
+    drop_id = next(m["id"] for m in dlg["messages"] if m["content"] == "drop")
+
+    resp = client.delete(
+        f"/api/sync/dialogs/phone-del-dlg/messages/{drop_id}", headers=phone_headers)
+    assert resp.status_code == 200 and resp.json()["ok"] is True
+
+    pulled = client.get("/api/sync/pull", headers=headers).json()["conversations"]
+    dlg = next(c for c in pulled if c["external_id"] == "phone-del-dlg")
+    contents = [m["content"] for m in dlg["messages"]]
+    assert contents == ["keep"]
+
+    # Audit trail on the master DB.
+    import sqlite3
+    from app.database import engine
+    with sqlite3.connect(engine.url.database) as conn:
+        conn.row_factory = sqlite3.Row
+        row = conn.execute(
+            "SELECT deleted_at, deleted_by FROM messages WHERE id=?", (drop_id,)
+        ).fetchone()
+    assert row["deleted_at"] is not None and row["deleted_by"] == "test-phone"
+
+    # 404 for an unknown dialog/message.
+    assert client.delete(
+        "/api/sync/dialogs/nope/messages/1", headers=headers).status_code == 404
+
+    # Cleanup (hard, test-only).
+    with sqlite3.connect(engine.url.database) as conn:
+        conn.execute("DELETE FROM message_tombstones WHERE conversation_id=?", (dlg_id := conn.execute(
+            "SELECT id FROM conversations WHERE external_id='phone-del-dlg'").fetchone()[0],))
+        conn.execute("DELETE FROM messages WHERE conversation_id=?", (dlg_id,))
+        conn.execute("DELETE FROM conversations WHERE id=?", (dlg_id,))

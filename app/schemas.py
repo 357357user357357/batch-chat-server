@@ -310,6 +310,8 @@ class BatchJobOut(BaseModel):
 
 
 class SyncMessage(BaseModel):
+    # Server-side message id — lets the phone delete a specific Q/A.
+    id: int | None = None
     role: str = Field(pattern="^(user|assistant|system)$")
     content: str
     model: str | None = None
