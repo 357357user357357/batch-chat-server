@@ -543,7 +543,7 @@ def test_push_never_resurrects_deleted_dialogs(monkeypatch):
     a stale push against a tombstoned dialog is skipped; the tombstone wins
     and the pusher drops its local copy on the next pull."""
     headers = auth_headers()
-    phone_headers = {**headers, "X-Device-Name": "redmi-note-9t"}
+    phone_headers = {**headers, "X-Device-Name": "test-phone"}
     dialog = {"id": "resurrect-dlg", "title": "Resurrect", "model": "m",
               "messages": [{"role": "user", "content": "old"}]}
 
@@ -668,7 +668,7 @@ def test_pull_always_delivers_tombstones_regardless_of_since():
     from app.database import engine
 
     headers = auth_headers()
-    phone_headers = {**headers, "X-Device-Name": "redmi-note-9t"}
+    phone_headers = {**headers, "X-Device-Name": "test-phone"}
     dialog = {"id": "tombstone-always", "title": "AlwaysDeliver", "model": "m",
               "messages": [{"role": "user", "content": "x"}]}
 
@@ -705,7 +705,7 @@ def test_sync_audit_trail_attribution():
     from app.database import engine
 
     headers = auth_headers()
-    phone_headers = {**headers, "X-Device-Name": "redmi-note-9t"}
+    phone_headers = {**headers, "X-Device-Name": "test-phone"}
 
     # 1. Phone pushes a dialog → origin_device = the phone.
     resp = client.post(
@@ -720,8 +720,8 @@ def test_sync_audit_trail_attribution():
 
     pulled = client.get("/api/sync/pull", headers=headers).json()
     dlg = next(c for c in pulled["conversations"] if c["external_id"] == "audit-dlg")
-    assert dlg["origin_device"] == "redmi-note-9t"
-    assert dlg["modified_by"] == "redmi-note-9t"
+    assert dlg["origin_device"] == "test-phone"
+    assert dlg["modified_by"] == "test-phone"
     assert dlg["deleted"] is False
 
     # 2. Web deletes it → deleted_at + deleted_by = web, record stays archived.
@@ -745,7 +745,7 @@ def test_sync_audit_trail_attribution():
         ).fetchone()
     assert archived["deleted_at"] is not None            # deletion DATE recorded
     assert archived["deleted_by"] == "web"               # WHO deleted it
-    assert archived["origin_device"] == "redmi-note-9t"  # WHOSE record it was
+    assert archived["origin_device"] == "test-phone"  # WHOSE record it was
     assert archived["title"] == "Audit"                  # content kept (archive)
 
     # 3. Pull shows the tombstone with the audit fields (devices drop it).
@@ -754,7 +754,7 @@ def test_sync_audit_trail_attribution():
     assert dlg["deleted"] is True
     assert dlg["deleted_at"] is not None
     assert dlg["deleted_by"] == "web"
-    assert dlg["origin_device"] == "redmi-note-9t"
+    assert dlg["origin_device"] == "test-phone"
 
     # Cleanup (hard delete, test-only).
     with sqlite3.connect(engine.url.database) as conn:
@@ -844,7 +844,7 @@ def test_sync_push_merges_web_added_messages(monkeypatch):
     after the phone's last sync. The pushed dialog's updated_at is older than
     the web message's created_at -> the web message is kept and appended."""
     headers = auth_headers()
-    phone_headers = {**headers, "X-Device-Name": "redmi-note-9t"}
+    phone_headers = {**headers, "X-Device-Name": "test-phone"}
     dialog = {"id": "merge-dlg", "title": "Merge", "model": "m",
               "messages": [{"role": "user", "content": "q1"}]}
 
