@@ -20,6 +20,7 @@ from app.schemas import (
     LoginRequest,
     LoginResponse,
     PairRequest,
+    RegisterRequest,
 )
 from app.security import (
     create_token,
@@ -47,13 +48,24 @@ def health() -> HealthResponse:
 def _resolve_login_account(db: Session, payload: LoginRequest) -> Account:
     """Which account does this login target?
 
+    - login given → that account by LABEL (case-insensitive) or by raw id
+      (bc-…); 404 if unknown.
     - account_id given → that account (404 if unknown).
-    - no account_id    → the owner account: the master password IS the
-      owner's credential, so a bare password login always lands there —
-      even after secondary client accounts exist.
+    - neither → the owner account: the master password IS the owner's
+      credential, so a bare password login always lands there.
     """
     from app.services.account import ensure_owner_account
 
+    wanted = (payload.login or "").strip()
+    if wanted:
+        rows = db.scalars(select(Account)).all()
+        for account in rows:
+            if (account.label or "").strip().lower() == wanted.lower():
+                return account
+        by_id = db.get(Account, wanted)
+        if by_id is not None:
+            return by_id
+        raise HTTPException(status_code=404, detail="Unknown login")
     if payload.account_id:
         account = db.get(Account, payload.account_id.strip())
         if account is None:
@@ -123,6 +135,34 @@ def rotate_account(
     return AccountResponse(**account_view(acct, server_url=base))
 
 
+@router.post("/auth/register", response_model=LoginResponse, status_code=201)
+def register(payload: RegisterRequest, request: Request, db: Session = Depends(get_db)) -> LoginResponse:
+    """Self-service registration: a client without an account creates one
+    with a unique Login + password (mandatory), and is logged in right away.
+
+    The new account is fully isolated: it sees only its own dialogs and
+    never the owner's data or provider credentials. Brute-force protected.
+    """
+    check_login_allowed(request)
+    login_name = payload.login.strip()
+    from app.services.account import hash_password
+
+    rows = db.scalars(select(Account)).all()
+    for account in rows:
+        if (account.label or "").strip().lower() == login_name.lower():
+            record_login_failure(request)
+            raise HTTPException(
+                status_code=409,
+                detail=f"Login '{login_name}' is already taken — choose another",
+            )
+    account = create_client_account(db, label=login_name)
+    account.password_hash = hash_password(payload.password)
+    db.commit()
+    record_login_success(request)
+    token = create_token(db, account.id)
+    return LoginResponse(token=token.token, expires_at=token.expires_at)
+
+
 @router.post("/auth/accounts", response_model=AccountResponse, status_code=201)
 def create_client(
     payload: AccountCreateRequest,
@@ -151,12 +191,11 @@ def create_client(
                 detail=f"Label '{label}' is already taken — labels must be unique",
             )
 
-    account = create_client_account(db, label=label)
-    if payload.client_password:
-        from app.services.account import hash_password
+    from app.services.account import hash_password
 
-        account.password_hash = hash_password(payload.client_password)
-        db.commit()
+    account = create_client_account(db, label=label)
+    account.password_hash = hash_password(payload.client_password)
+    db.commit()
     base = str(request.base_url).rstrip("/")
     return AccountResponse(**account_view(account, server_url=base))
 

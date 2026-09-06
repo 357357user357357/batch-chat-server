@@ -74,10 +74,19 @@ class AccountResponse(BaseModel):
     pair_code: str
 
 
+class RegisterRequest(BaseModel):
+    """Self-service client registration: unique login + mandatory password."""
+
+    login: str = Field(min_length=2, max_length=64)
+    password: str = Field(min_length=6, max_length=128)
+
+
 class LoginRequest(BaseModel):
     password: str
-    # Which account to log into. Optional for backward compatibility: with a
-    # single account it is inferred; with several, it is required.
+    # The login (account label, case-insensitive) or a raw account id
+    # (bc-…). Optional for backward compatibility: empty means the owner
+    # account, which authenticates with the master password.
+    login: str | None = None
     account_id: str | None = None
 
 
@@ -87,10 +96,9 @@ class AccountCreateRequest(BaseModel):
     admin_password: str
     # Must be unique among this instance's accounts (case-insensitive).
     label: str | None = Field(default=None, max_length=64)
-    # Optional dedicated password for this client: when set, the client logs
-    # in with Account ID + THIS password (the master no longer opens that
-    # account). When unset, the account accepts the master password.
-    client_password: str | None = Field(default=None, min_length=6, max_length=128)
+    # Mandatory per-client password: the client logs in with
+    # Login + THIS password (the master never opens their account).
+    client_password: str = Field(min_length=6, max_length=128)
 
 
 class AccountSummary(BaseModel):

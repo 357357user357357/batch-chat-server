@@ -18,9 +18,19 @@
       <h1>Batch Chat</h1>
       <p class="login-sub">Log in to your chat server</p>
       <input id="login-password" type="password" placeholder="Password" autocomplete="current-password" required />
-      <input id="login-account" type="text" placeholder="Account ID (optional — e.g. bc-…)" autocomplete="off" spellcheck="false" />
+      <input id="login-account" type="text" placeholder="Login (leave empty for owner)" autocomplete="username" spellcheck="false" />
       <button type="submit" class="btn btn-primary">Log in</button>
+      <button type="button" id="login-register-toggle" class="btn btn-ghost btn-small">No account? Create one</button>
       <p id="login-error" class="error-text hidden"></p>
+    </form>
+    <form id="register-form" class="login-card hidden">
+      <h1>Batch Chat</h1>
+      <p class="login-sub">Create a client account — Login must be unique, password is mandatory</p>
+      <input id="register-login" type="text" placeholder="Login (unique, e.g. Alice)" autocomplete="username" required minlength="2" spellcheck="false" />
+      <input id="register-password" type="password" placeholder="Password (min 6 chars)" autocomplete="new-password" required minlength="6" />
+      <button type="submit" class="btn btn-primary">Create account &amp; log in</button>
+      <button type="button" id="register-back" class="btn btn-ghost btn-small">← Back to login</button>
+      <p id="register-error" class="error-text hidden"></p>
     </form>
   </section>
 
@@ -260,14 +270,14 @@
         <strong>Client accounts.</strong> Create an isolated account for another
         person/device: it gets its own pairing code and sees <em>only its
         own</em> dialogs — never yours and never the provider keys above.
-        Labels must be <em>unique</em>. Give the client their own password and
-        they log in with <em>Account ID + that password</em> (the master
-        password stops opening their account). Creating one requires the
+        Logins must be <em>unique</em> and every client gets a mandatory
+        password — they log in with <em>Login + password</em> (the master
+        password never opens their account). Creating one requires the
         master password.
       </p>
       <div class="account-create-row">
-        <input id="account-label" type="text" placeholder="Label (unique, e.g. Alice)" autocomplete="off" spellcheck="false" />
-        <input id="account-client-password" type="password" placeholder="Client password (optional)" autocomplete="new-password" />
+        <input id="account-label" type="text" placeholder="Login (unique, e.g. Alice)" autocomplete="off" spellcheck="false" />
+        <input id="account-client-password" type="password" placeholder="Client password (required)" autocomplete="new-password" />
         <input id="account-admin-password" type="password" placeholder="Master password" autocomplete="off" />
         <button id="account-create" class="btn btn-ghost btn-small">➕ Create client</button>
       </div>

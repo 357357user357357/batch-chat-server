@@ -29,6 +29,12 @@ const els = {
   loginForm: $("#login-form"),
   loginPassword: $("#login-password"),
   loginAccount: $("#login-account"),
+  loginRegisterToggle: $("#login-register-toggle"),
+  registerForm: $("#register-form"),
+  registerLogin: $("#register-login"),
+  registerPassword: $("#register-password"),
+  registerBack: $("#register-back"),
+  registerError: $("#register-error"),
   loginError: $("#login-error"),
   conversationList: $("#conversation-list"),
   newChatBtn: $("#new-chat-btn"),
@@ -140,8 +146,8 @@ els.loginForm.addEventListener("submit", async (e) => {
   els.loginError.classList.add("hidden");
   try {
     const body = { password: els.loginPassword.value };
-    const acct = els.loginAccount.value.trim();
-    if (acct) body.account_id = acct;
+    const loginName = els.loginAccount.value.trim();
+    if (loginName) body.login = loginName;
     const data = await api("/api/auth/login", {
       method: "POST",
       body: JSON.stringify(body),
@@ -152,6 +158,37 @@ els.loginForm.addEventListener("submit", async (e) => {
   } catch (err) {
     els.loginError.textContent = err.message;
     els.loginError.classList.remove("hidden");
+  }
+});
+
+// Client self-registration (Login + mandatory password).
+els.registerBack.addEventListener("click", () => {
+  els.registerForm.classList.add("hidden");
+  els.loginForm.classList.remove("hidden");
+  els.registerError.classList.add("hidden");
+});
+els.loginRegisterToggle.addEventListener("click", () => {
+  els.loginForm.classList.add("hidden");
+  els.registerForm.classList.remove("hidden");
+  els.loginError.classList.add("hidden");
+});
+els.registerForm.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  els.registerError.classList.add("hidden");
+  try {
+    const data = await api("/api/auth/register", {
+      method: "POST",
+      body: JSON.stringify({
+        login: els.registerLogin.value.trim(),
+        password: els.registerPassword.value,
+      }),
+    });
+    state.token = data.token;
+    localStorage.setItem("bc_token", data.token);
+    showApp();
+  } catch (err) {
+    els.registerError.textContent = err.message;
+    els.registerError.classList.remove("hidden");
   }
 });
 
@@ -1370,9 +1407,15 @@ async function loadAccount() {
 
 els.accountCreate.addEventListener("click", async () => {
   const adminPassword = els.accountAdminPassword.value;
+  const clientPassword = els.accountClientPassword.value;
   if (!adminPassword) {
     els.accountList.className = "import-status err";
     els.accountList.textContent = "Enter the master password to create a client account.";
+    return;
+  }
+  if (clientPassword.length < 6) {
+    els.accountList.className = "import-status err";
+    els.accountList.textContent = "Client password is required (min 6 chars).";
     return;
   }
   els.accountCreate.disabled = true;

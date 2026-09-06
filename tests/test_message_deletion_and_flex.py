@@ -1061,7 +1061,7 @@ def test_multi_account_isolation_and_pairing():
     # Create an isolated client account with the master password.
     created = client.post(
         "/api/auth/accounts",
-        json={"admin_password": "test", "label": "uniqcheck"},
+        json={"admin_password": "test", "label": "uniqcheck", "client_password": "alice-pw-1"},
     )
     assert created.status_code == 201, created.text
     pair_code = created.json()["pair_code"]
@@ -1106,7 +1106,7 @@ def test_multi_account_isolation_and_pairing():
 def test_settings_owner_only_and_backup():
     owner = auth_headers()
     created = client.post(
-        "/api/auth/accounts", json={"admin_password": "test", "label": "bob"}
+        "/api/auth/accounts", json={"admin_password": "test", "label": "bob", "client_password": "bob-pw-123"}
     )
     assert created.status_code == 201
     bob = _pair_headers(created.json()["pair_code"])
@@ -1117,7 +1117,7 @@ def test_settings_owner_only_and_backup():
     assert client.get("/api/settings", headers=owner).status_code == 200
     # Wrong master password is rejected (and counted as a login failure).
     assert client.post(
-        "/api/auth/accounts", json={"admin_password": "nope", "label": "x"}
+        "/api/auth/accounts", json={"admin_password": "nope", "label": "x", "client_password": "x-pw-123"}
     ).status_code == 401
     # The account list shows all accounts without secrets.
     listed = client.get("/api/auth/accounts", headers=owner).json()
@@ -1138,12 +1138,12 @@ def test_login_without_account_id_lands_on_owner():
         headers={"Authorization": f"Bearer {bare.json()['token']}"},
     ).json()
     assert me["account_id"] == owner_id
-    # An explicit non-owner account_id with the master password also works
-    # (accounts without their own password accept the master password).
+    # Every client now has a mandatory password, so the master password can
+    # no longer open a client account — it is only the owner's credential.
     listed = client.get("/api/auth/accounts", headers=owner).json()
     other = next(a["account_id"] for a in listed if a["account_id"] != owner_id)
-    ok = client.post("/api/auth/login", json={"password": "test", "account_id": other})
-    assert ok.status_code == 200
+    denied = client.post("/api/auth/login", json={"password": "test", "account_id": other})
+    assert denied.status_code == 401
     # Unknown account id → 404.
     assert client.post(
         "/api/auth/login", json={"password": "test", "account_id": "bc-nope"}
@@ -1156,13 +1156,13 @@ def test_client_labels_are_unique():
     r1 = client.post(
         "/api/auth/accounts",
         headers=owner,
-        json={"admin_password": "test", "label": "SoloLabel"},
+        json={"admin_password": "test", "label": "SoloLabel", "client_password": "solo-pw-1"},
     )
     assert r1.status_code == 201, r1.text
     r2 = client.post(
         "/api/auth/accounts",
         headers=owner,
-        json={"admin_password": "test", "label": "sololabel"},
+        json={"admin_password": "test", "label": "sololabel", "client_password": "solo-pw-2"},
     )
     assert r2.status_code == 409
     assert "already taken" in r2.json()["detail"]
@@ -1203,3 +1203,42 @@ def test_client_password_login():
     )
     assert row["has_password"] is True
     assert row["label"] == "PwClient"
+
+
+def test_self_registration_login_and_isolation():
+    """A client without an account self-registers with a unique Login +
+    mandatory password, lands in its own isolated account, and logs in
+    later with Login + password (case-insensitive)."""
+    r = client.post(
+        "/api/auth/register",
+        json={"login": "NewClient", "password": "reg-pw-123"},
+    )
+    assert r.status_code == 201, r.text
+    token = r.json()["token"]
+    headers = {"Authorization": f"Bearer {token}"}
+    # Its own account, no owner dialogs visible.
+    me = client.get("/api/auth/me", headers=headers).json()
+    assert me["account_id"] != client.get(
+        "/api/auth/account", headers=auth_headers()
+    ).json()["account_id"]
+    assert client.get("/api/conversations", headers=headers).json() == []
+    # Login again with the same login (different case) + password.
+    again = client.post(
+        "/api/auth/login", json={"login": "newclient", "password": "reg-pw-123"}
+    )
+    assert again.status_code == 200, again.text
+    me2 = client.get(
+        "/api/auth/me", headers={"Authorization": f"Bearer {again.json()['token']}"}
+    ).json()
+    assert me2["account_id"] == me["account_id"]
+    # Wrong password → 401; duplicate login → 409.
+    assert client.post(
+        "/api/auth/login", json={"login": "NewClient", "password": "wrong-pw"}
+    ).status_code == 401
+    assert client.post(
+        "/api/auth/register", json={"login": "newclient", "password": "whatever-1"}
+    ).status_code == 409
+    # Password is mandatory: too-short password → validation error (422).
+    assert client.post(
+        "/api/auth/register", json={"login": "Shorty", "password": "123"}
+    ).status_code == 422
