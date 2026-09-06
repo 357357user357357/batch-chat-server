@@ -16,6 +16,9 @@ Every record the master server stores carries an audit trail: WHO created it
 never removed from the master DB; they are the archive.
 """
 
+from collections import Counter
+from datetime import datetime, timezone
+
 from fastapi import APIRouter, Depends, Request
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
@@ -79,18 +82,23 @@ def pull(
                 kind=conv.kind,
                 model=conv.model,
                 title=conv.title,
-                created_at=conv.created_at,
-                updated_at=conv.updated_at,
+                created_at=_utc(conv.created_at),
+                updated_at=_utc(conv.updated_at),
                 deleted=deleted,
                 # Audit trail: whose record this is / was, and what happened.
                 origin_device=conv.origin_device,
                 modified_by=conv.modified_by,
-                deleted_at=conv.deleted_at if deleted else None,
+                deleted_at=_utc(conv.deleted_at) if deleted else None,
                 deleted_by=conv.deleted_by if deleted else None,
                 messages=[]
                 if deleted
                 else [
-                    SyncMessage(role=m.role, content=m.content, model=m.model)
+                    SyncMessage(
+                        role=m.role,
+                        content=m.content,
+                        model=m.model,
+                        created_at=_utc(m.created_at),
+                    )
                     for m in conv.messages
                     if m.deleted_at is None
                 ],
@@ -122,7 +130,8 @@ def push(
         messages = dialog_messages(dialog)
         status = _upsert(db, external_id=dialog.id, kind="chat", model=dialog.model,
                          title=title_default(dialog.title, "Imported chat"), messages=messages,
-                         device=device)
+                         device=device,
+                         dialog_updated_at=_parse_push_updated_at(dialog.updatedAt))
         if status == "updated":
             updated += 1
         elif status == "skipped_deleted":
@@ -136,7 +145,8 @@ def push(
         messages = batch_messages(item)
         status = _upsert(db, external_id=item.id, kind="batch", model=item.model,
                          title=title_default(item.title, "Batch"), messages=messages,
-                         device=device)
+                         device=device,
+                         dialog_updated_at=_parse_push_updated_at(item.updatedAt))
         if status == "updated":
             updated += 1
         elif status == "skipped_deleted":
@@ -179,14 +189,24 @@ def _upsert(
     title: str,
     messages: list[tuple[str, str, str | None]],
     device: str = "unknown",
+    dialog_updated_at: datetime | None = None,
 ) -> str:
     """Create or update a conversation by external_id. Returns "created",
     "updated" or "skipped_deleted" (a stale push against a tombstoned dialog).
 
-    Individually deleted Q/A are preserved: messages already archived on the
-    server (deleted_at set) are never wiped by a device push, and incoming
-    messages matching a tombstone (role + exact content) are skipped so a
-    deleted question/answer cannot be resurrected by an older device copy.
+    Message MERGE (not replace): a device push carries the device's full local
+    copy, which may be STALE — e.g. the web added a message after the device's
+    last sync. Replacing the whole list used to wipe those messages. Instead:
+
+    - pushed messages that already exist on the server are kept in place
+      (multiset-matched by role + content);
+    - server messages MISSING from the push are kept when they were created
+      AFTER the dialog's pushed `updated_at` (added by another device since
+      the device's last view) and archived as tombstones when they were
+      created before it (deleted on the pushing device) — nothing is ever
+      hard-deleted from the master DB;
+    - pushed messages matching a tombstone (role + content) are skipped, so
+      web deletions are never resurrected.
 
     Audit trail: a new record gets origin_device (whose record it is), and
     every device-driven change marks modified_by (last modifier; the date is
@@ -222,17 +242,79 @@ def _upsert(
                 )
             ).all()
         )
-        # Drop only the live messages; archived (deleted) ones stay in the DB.
-        for msg in list(conv.messages):
-            if msg.deleted_at is None:
-                db.delete(msg)
-        db.flush()
+        # Multiset-match the pushed list against the live server messages.
+        live = [m for m in conv.messages if m.deleted_at is None]
+        remaining = Counter((role, content) for role, content, _ in messages)
+        keep = set()
+        archive = []
+        for m in live:
+            key = (m.role, m.content)
+            if remaining.get(key, 0) > 0:
+                remaining[key] -= 1
+                keep.add(m.id)
+            elif (
+                dialog_updated_at
+                and m.created_at
+                and m.created_at > dialog_updated_at
+            ):
+                # Added by another device after this device's last view of the
+                # dialog — keep it even though the push doesn't include it.
+                keep.add(m.id)
+            else:
+                # Removed on the pushing device → archive (soft delete).
+                archive.append(m)
 
+        for m in archive:
+            m.deleted_at = utcnow()
+            m.deleted_by = device
+            db.add(MessageTombstone(
+                conversation_id=conv.id, role=m.role, content=m.content,
+                deleted_by=device,
+            ))
+
+        # Append pushed messages that are not already on the server
+        # (multiset-aware), skipping tombstoned ones.
+        kept_counter = Counter((m.role, m.content) for m in live if m.id in keep)
+        for role, content, msg_model in messages:
+            if (role, content) in tombstones:
+                continue  # deleted from the web — keep it deleted
+            if kept_counter.get((role, content), 0) > 0:
+                kept_counter[(role, content)] -= 1
+                continue  # already on the server
+            db.add(Message(conversation_id=conv.id, role=role, content=content, model=msg_model))
+        db.flush()
+        return "updated"
+
+    # Newly created dialog: add every pushed message (skipping tombstones —
+    # a brand-new dialog can't match any, but stay defensive).
     for role, content, msg_model in messages:
         if (role, content) in tombstones:
-            continue  # deleted from the web — keep it deleted
+            continue
         db.add(Message(conversation_id=conv.id, role=role, content=content, model=msg_model))
-    return "updated" if not is_new else "created"
+    return "created"
+
+
+def _parse_push_updated_at(value) -> datetime | None:
+    """Parse the dialog `updated_at` a device pushes (ms epoch or ISO)."""
+    if value in (None, ""):
+        return None
+    if isinstance(value, (int, float)):
+        try:
+            return datetime.utcfromtimestamp(value / 1000 if value > 1e11 else value)
+        except (OverflowError, OSError, ValueError):
+            return None
+    try:
+        return datetime.fromisoformat(
+            str(value).replace("Z", "+00:00")
+        ).replace(tzinfo=None)
+    except ValueError:
+        return None
+
+
+def _utc(dt: datetime | None) -> datetime | None:
+    """Attach UTC so pydantic serializes ...+00:00 (clients parse it as a real
+    UTC instant; naive strings were being misread as local time)."""
+    return dt.replace(tzinfo=timezone.utc) if dt else None
 
 
 def _parse_since(value: str):

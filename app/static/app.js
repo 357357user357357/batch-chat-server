@@ -545,6 +545,21 @@ function appendMessage(msg) {
     div.appendChild(modelTag);
   }
 
+  // Message date, DD.MM.YY HH.MM in the viewer's timezone. Server stamps are
+  // naive UTC, so append "Z" before parsing.
+  if (msg.created_at) {
+    const d = new Date(msg.created_at.endsWith("Z") ? msg.created_at : msg.created_at + "Z");
+    if (!isNaN(d)) {
+      const p = (n) => String(n).padStart(2, "0");
+      const dateTag = document.createElement("span");
+      dateTag.className = "message-date";
+      dateTag.textContent =
+        `${p(d.getDate())}.${p(d.getMonth() + 1)}.${String(d.getFullYear()).slice(2)} ` +
+        `${p(d.getHours())}.${p(d.getMinutes())}`;
+      div.appendChild(dateTag);
+    }
+  }
+
   const text = document.createElement("div");
   text.className = "message-text";
   renderRichText(text, msg.content || "");

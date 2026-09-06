@@ -147,7 +147,9 @@ class PhoneDialog(BaseModel):
     model: str | None = None
     messages: list[ImportMessage] = []
     createdAt: int | None = None
-    updatedAt: int | None = None
+    # ms epoch (old builds) or ISO string (new builds) — used by the master
+    # server's message merge to tell stale copies from fresh ones.
+    updatedAt: str | int | float | None = None
 
 
 class PhoneBatchResult(BaseModel):
@@ -168,6 +170,8 @@ class PhoneBatch(BaseModel):
     model: str | None = None
     prompts: list[str] = []
     createdAt: int | None = None
+    # ms epoch or ISO string — used by the message merge (see PhoneDialog).
+    updatedAt: str | int | float | None = None
     # Raw OpenRouter batch object stored inside the item (id/status/results).
     # We only use its "results" list; everything else is ignored.
     batch: dict | None = None
@@ -309,6 +313,8 @@ class SyncMessage(BaseModel):
     role: str = Field(pattern="^(user|assistant|system)$")
     content: str
     model: str | None = None
+    # UTC timestamp — lets the phone show per-message dates (DD.MM.YY HH.MM).
+    created_at: datetime | None = None
 
 
 class SyncConversationOut(BaseModel):
