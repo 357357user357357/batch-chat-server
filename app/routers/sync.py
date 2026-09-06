@@ -130,8 +130,7 @@ def push(
         messages = dialog_messages(dialog)
         status = _upsert(db, external_id=dialog.id, kind="chat", model=dialog.model,
                          title=title_default(dialog.title, "Imported chat"), messages=messages,
-                         device=device,
-                         dialog_updated_at=_parse_push_updated_at(dialog.updatedAt))
+                         device=device)
         if status == "updated":
             updated += 1
         elif status == "skipped_deleted":
@@ -145,8 +144,7 @@ def push(
         messages = batch_messages(item)
         status = _upsert(db, external_id=item.id, kind="batch", model=item.model,
                          title=title_default(item.title, "Batch"), messages=messages,
-                         device=device,
-                         dialog_updated_at=_parse_push_updated_at(item.updatedAt))
+                         device=device)
         if status == "updated":
             updated += 1
         elif status == "skipped_deleted":
@@ -189,22 +187,20 @@ def _upsert(
     title: str,
     messages: list[tuple[str, str, str | None]],
     device: str = "unknown",
-    dialog_updated_at: datetime | None = None,
 ) -> str:
     """Create or update a conversation by external_id. Returns "created",
     "updated" or "skipped_deleted" (a stale push against a tombstoned dialog).
 
-    Message MERGE (not replace): a device push carries the device's full local
-    copy, which may be STALE — e.g. the web added a message after the device's
-    last sync. Replacing the whole list used to wipe those messages. Instead:
+    Message MERGE is APPEND-ONLY: a device push carries the device's full
+    local copy, which may be STALE (e.g. the web added a message after the
+    device's last sync). Client timestamps are NOT trusted for deletion
+    decisions — a message that exists on the server is never removed because
+    it is absent from a push. Server messages are only ever removed through
+    the explicit deletion endpoints (which create tombstones).
 
     - pushed messages that already exist on the server are kept in place
-      (multiset-matched by role + content);
-    - server messages MISSING from the push are kept when they were created
-      AFTER the dialog's pushed `updated_at` (added by another device since
-      the device's last view) and archived as tombstones when they were
-      created before it (deleted on the pushing device) — nothing is ever
-      hard-deleted from the master DB;
+      (multiset-matched by role + content, so nothing is duplicated);
+    - pushed messages not on the server yet are appended;
     - pushed messages matching a tombstone (role + content) are skipped, so
       web deletions are never resurrected.
 
@@ -242,39 +238,13 @@ def _upsert(
                 )
             ).all()
         )
-        # Multiset-match the pushed list against the live server messages.
-        live = [m for m in conv.messages if m.deleted_at is None]
-        remaining = Counter((role, content) for role, content, _ in messages)
-        keep = set()
-        archive = []
-        for m in live:
-            key = (m.role, m.content)
-            if remaining.get(key, 0) > 0:
-                remaining[key] -= 1
-                keep.add(m.id)
-            elif (
-                dialog_updated_at
-                and m.created_at
-                and m.created_at > dialog_updated_at
-            ):
-                # Added by another device after this device's last view of the
-                # dialog — keep it even though the push doesn't include it.
-                keep.add(m.id)
-            else:
-                # Removed on the pushing device → archive (soft delete).
-                archive.append(m)
-
-        for m in archive:
-            m.deleted_at = utcnow()
-            m.deleted_by = device
-            db.add(MessageTombstone(
-                conversation_id=conv.id, role=m.role, content=m.content,
-                deleted_by=device,
-            ))
-
-        # Append pushed messages that are not already on the server
-        # (multiset-aware), skipping tombstoned ones.
-        kept_counter = Counter((m.role, m.content) for m in live if m.id in keep)
+        # APPEND-ONLY merge: match pushed messages against the live server
+        # messages (multiset) so nothing duplicates, append the rest. Server
+        # messages are NEVER removed for being absent from a push — deletion
+        # happens only via the explicit endpoints (tombstones).
+        kept_counter = Counter(
+            (m.role, m.content) for m in conv.messages if m.deleted_at is None
+        )
         for role, content, msg_model in messages:
             if (role, content) in tombstones:
                 continue  # deleted from the web — keep it deleted
@@ -292,23 +262,6 @@ def _upsert(
             continue
         db.add(Message(conversation_id=conv.id, role=role, content=content, model=msg_model))
     return "created"
-
-
-def _parse_push_updated_at(value) -> datetime | None:
-    """Parse the dialog `updated_at` a device pushes (ms epoch or ISO)."""
-    if value in (None, ""):
-        return None
-    if isinstance(value, (int, float)):
-        try:
-            return datetime.utcfromtimestamp(value / 1000 if value > 1e11 else value)
-        except (OverflowError, OSError, ValueError):
-            return None
-    try:
-        return datetime.fromisoformat(
-            str(value).replace("Z", "+00:00")
-        ).replace(tzinfo=None)
-    except ValueError:
-        return None
 
 
 def _utc(dt: datetime | None) -> datetime | None:

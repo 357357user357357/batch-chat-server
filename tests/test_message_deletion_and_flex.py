@@ -887,3 +887,48 @@ def test_sync_push_merges_web_added_messages(monkeypatch):
         conn.execute("DELETE FROM message_tombstones WHERE conversation_id=?", (conv_id,))
         conn.execute("DELETE FROM messages WHERE conversation_id=?", (conv_id,))
         conn.execute("DELETE FROM conversations WHERE id=?", (conv_id,))
+
+
+def test_sync_push_append_only_even_with_future_stamp(monkeypatch):
+    """Regression: the merge must be APPEND-ONLY. A stale phone push whose
+    updated_at stamp is NEWER than a web-added message's created_at (the phone
+    re-stamps dialogs from the server after every sync) used to archive the
+    web message. Absence from a push must never remove a server message."""
+    headers = auth_headers()
+    phone_headers = {**headers, "X-Device-Name": "test-phone"}
+    dialog = {"id": "append-dlg", "title": "Append", "model": "m",
+              "messages": [{"role": "user", "content": "q1"}]}
+
+    assert client.post("/api/sync/push", headers=phone_headers,
+                       json={"dialogs": [dialog], "batches": [],
+                             "deleted_external_ids": [], "keys": {}}).status_code == 200
+
+    import sqlite3
+    from app.database import engine
+    with sqlite3.connect(engine.url.database) as conn:
+        conv_id = conn.execute(
+            "SELECT id FROM conversations WHERE external_id='append-dlg'"
+        ).fetchone()[0]
+    added = client.post(f"/api/conversations/{conv_id}/messages", headers=headers,
+                        json={"role": "assistant", "content": "web answer 2"}).json()
+    assert added["id"]
+
+    # Stale copy WITHOUT the web answer, stamped far in the FUTURE — the exact
+    # case that used to wipe the message. It must survive untouched.
+    stale = {"id": "append-dlg", "title": "Append", "model": "m",
+             "messages": [{"role": "user", "content": "q1"}],
+             "updatedAt": 99999999999999}  # epoch ms, year ~5138
+    resp = client.post("/api/sync/push", headers=phone_headers,
+                       json={"dialogs": [stale], "batches": [],
+                             "deleted_external_ids": [], "keys": {}})
+    assert resp.status_code == 200
+
+    detail = client.get(f"/api/conversations/{conv_id}", headers=headers).json()
+    contents = [m["content"] for m in detail["messages"]]
+    assert contents == ["q1", "web answer 2"]
+
+    # Cleanup (hard, test-only).
+    with sqlite3.connect(engine.url.database) as conn:
+        conn.execute("DELETE FROM message_tombstones WHERE conversation_id=?", (conv_id,))
+        conn.execute("DELETE FROM messages WHERE conversation_id=?", (conv_id,))
+        conn.execute("DELETE FROM conversations WHERE id=?", (conv_id,))
