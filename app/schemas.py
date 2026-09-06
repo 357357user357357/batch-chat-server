@@ -85,7 +85,12 @@ class AccountCreateRequest(BaseModel):
     """Owner/admin request to create an additional client account."""
 
     admin_password: str
+    # Must be unique among this instance's accounts (case-insensitive).
     label: str | None = Field(default=None, max_length=64)
+    # Optional dedicated password for this client: when set, the client logs
+    # in with Account ID + THIS password (the master no longer opens that
+    # account). When unset, the account accepts the master password.
+    client_password: str | None = Field(default=None, min_length=6, max_length=128)
 
 
 class AccountSummary(BaseModel):
@@ -93,6 +98,7 @@ class AccountSummary(BaseModel):
 
     account_id: str
     label: str | None = None
+    has_password: bool = False
     created_at: datetime | None = None
 
 

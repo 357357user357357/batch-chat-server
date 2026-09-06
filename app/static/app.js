@@ -97,6 +97,7 @@ const els = {
   accountCopy: $("#account-copy"),
   accountRotate: $("#account-rotate"),
   accountLabel: $("#account-label"),
+  accountClientPassword: $("#account-client-password"),
   accountAdminPassword: $("#account-admin-password"),
   accountCreate: $("#account-create"),
   accountList: $("#account-list"),
@@ -1354,7 +1355,10 @@ async function loadAccount() {
       els.accountList.textContent =
         "Accounts: " +
         rows
-          .map((a) => (a.label ? `${a.account_id} (${a.label})` : a.account_id))
+          .map((a) => {
+            const label = a.label ? ` (${a.label}${a.has_password ? " 🔑" : ""})` : a.has_password ? " (🔑)" : "";
+            return `${a.account_id}${label}`;
+          })
           .join(", ");
     } else {
       els.accountList.textContent = "";
@@ -1380,10 +1384,12 @@ els.accountCreate.addEventListener("click", async () => {
       body: JSON.stringify({
         admin_password: adminPassword,
         label: els.accountLabel.value.trim() || null,
+        client_password: els.accountClientPassword.value || null,
       }),
     });
     els.accountAdminPassword.value = "";
     els.accountLabel.value = "";
+    els.accountClientPassword.value = "";
     els.accountList.className = "import-status ok";
     els.accountList.textContent = `Created ${data.account_id} — its pairing code is shown below; copy it now.`;
     els.accountCode.textContent = data.pair_code;

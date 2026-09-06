@@ -141,7 +141,22 @@ def create_client(
         record_login_failure(request)
         raise HTTPException(status_code=401, detail="Wrong admin password")
     record_login_success(request)
-    account = create_client_account(db, label=payload.label)
+
+    label = (payload.label or "").strip() or None
+    if label:
+        existing = db.scalars(select(Account.label)).all()
+        if any((e or "").strip().lower() == label.lower() for e in existing):
+            raise HTTPException(
+                status_code=409,
+                detail=f"Label '{label}' is already taken — labels must be unique",
+            )
+
+    account = create_client_account(db, label=label)
+    if payload.client_password:
+        from app.services.account import hash_password
+
+        account.password_hash = hash_password(payload.client_password)
+        db.commit()
     base = str(request.base_url).rstrip("/")
     return AccountResponse(**account_view(account, server_url=base))
 
@@ -154,7 +169,12 @@ def list_accounts(
     """All accounts on this instance (ids + labels only, no secrets)."""
     rows = db.scalars(select(Account).order_by(Account.created_at, Account.id)).all()
     return [
-        AccountSummary(account_id=a.id, label=a.label, created_at=a.created_at)
+        AccountSummary(
+            account_id=a.id,
+            label=a.label,
+            has_password=bool(a.password_hash),
+            created_at=a.created_at,
+        )
         for a in rows
     ]
 

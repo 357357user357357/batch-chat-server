@@ -1061,7 +1061,7 @@ def test_multi_account_isolation_and_pairing():
     # Create an isolated client account with the master password.
     created = client.post(
         "/api/auth/accounts",
-        json={"admin_password": "test", "label": "alice"},
+        json={"admin_password": "test", "label": "uniqcheck"},
     )
     assert created.status_code == 201, created.text
     pair_code = created.json()["pair_code"]
@@ -1148,3 +1148,58 @@ def test_login_without_account_id_lands_on_owner():
     assert client.post(
         "/api/auth/login", json={"password": "test", "account_id": "bc-nope"}
     ).status_code == 404
+
+
+def test_client_labels_are_unique():
+    """Creating a client with a label that already exists (any case) → 409."""
+    owner = auth_headers()
+    r1 = client.post(
+        "/api/auth/accounts",
+        headers=owner,
+        json={"admin_password": "test", "label": "SoloLabel"},
+    )
+    assert r1.status_code == 201, r1.text
+    r2 = client.post(
+        "/api/auth/accounts",
+        headers=owner,
+        json={"admin_password": "test", "label": "sololabel"},
+    )
+    assert r2.status_code == 409
+    assert "already taken" in r2.json()["detail"]
+
+
+def test_client_password_login():
+    """A client created with its own password logs in with
+    Account ID + that password; the master password no longer opens it."""
+    owner = auth_headers()
+    created = client.post(
+        "/api/auth/accounts",
+        headers=owner,
+        json={
+            "admin_password": "test",
+            "label": "PwClient",
+            "client_password": "client-secret-1",
+        },
+    ).json()
+    acct = created["account_id"]
+    # Own password works.
+    ok = client.post(
+        "/api/auth/login", json={"password": "client-secret-1", "account_id": acct}
+    )
+    assert ok.status_code == 200, ok.text
+    me = client.get(
+        "/api/auth/me", headers={"Authorization": f"Bearer {ok.json()['token']}"}
+    ).json()
+    assert me["account_id"] == acct
+    # Master password no longer opens this account.
+    denied = client.post(
+        "/api/auth/login", json={"password": "test", "account_id": acct}
+    )
+    assert denied.status_code == 401
+    # Listing marks it as password-protected.
+    row = next(
+        a for a in client.get("/api/auth/accounts", headers=owner).json()
+        if a["account_id"] == acct
+    )
+    assert row["has_password"] is True
+    assert row["label"] == "PwClient"

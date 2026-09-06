@@ -260,10 +260,14 @@
         <strong>Client accounts.</strong> Create an isolated account for another
         person/device: it gets its own pairing code and sees <em>only its
         own</em> dialogs — never yours and never the provider keys above.
-        Creating one requires the master password.
+        Labels must be <em>unique</em>. Give the client their own password and
+        they log in with <em>Account ID + that password</em> (the master
+        password stops opening their account). Creating one requires the
+        master password.
       </p>
       <div class="account-create-row">
-        <input id="account-label" type="text" placeholder="Label (e.g. Alice)" autocomplete="off" spellcheck="false" />
+        <input id="account-label" type="text" placeholder="Label (unique, e.g. Alice)" autocomplete="off" spellcheck="false" />
+        <input id="account-client-password" type="password" placeholder="Client password (optional)" autocomplete="new-password" />
         <input id="account-admin-password" type="password" placeholder="Master password" autocomplete="off" />
         <button id="account-create" class="btn btn-ghost btn-small">➕ Create client</button>
       </div>
