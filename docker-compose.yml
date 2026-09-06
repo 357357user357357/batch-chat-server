@@ -5,10 +5,12 @@ services:
     restart: unless-stopped
     env_file:
       - .env
-    command: sh -c "uvicorn app.main:app --host 0.0.0.0 --port 8000 & uvicorn app.main:app --host 0.0.0.0 --port 8443 --ssl-keyfile /certs/server.key --ssl-certfile /certs/server.crt & wait"
+    command: sh -c "uvicorn app.main:app --host 0.0.0.0 --port 8000 & uvicorn app.main:app --host 0.0.0.0 --port 8443 --ssl-keyfile /lego/194.36.85.208.key --ssl-certfile /lego/194.36.85.208.fullchain.crt & wait"
     ports:
       - "8000:8000"
       - "8443:8443"
+      - "443:8443"
     volumes:
       - ./data:/app/data
       - ./certs:/certs:ro
+      - ./.lego/certificates:/lego:ro
