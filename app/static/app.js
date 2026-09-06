@@ -91,6 +91,11 @@ const els = {
   settingsStatus: $("#settings-status"),
   settingsSubmit: $("#settings-submit"),
   settingsBackupStatus: $("#settings-backup-status"),
+  accountStatus: $("#account-status"),
+  accountReveal: $("#account-reveal"),
+  accountCopy: $("#account-copy"),
+  accountRotate: $("#account-rotate"),
+  accountCode: $("#account-code"),
   settingsBackupDownload: $("#settings-backup-download"),
   settingsBackupRestoreBtn: $("#settings-backup-restore-btn"),
   settingsBackupFile: $("#settings-backup-file"),
@@ -1314,7 +1319,70 @@ function openSettings() {
   els.settingsStatus.textContent = "";
   els.settingsModal.classList.remove("hidden");
   loadSettings();
+  loadAccount();
 }
+
+let accountPairCode = "";
+
+async function loadAccount() {
+  els.accountStatus.className = "import-status";
+  els.accountStatus.textContent = "";
+  els.accountCode.classList.add("hidden");
+  els.accountCode.textContent = "";
+  els.accountReveal.textContent = "👁 Reveal pairing code";
+  try {
+    const data = await api("/api/auth/account");
+    accountPairCode = data.pair_code;
+    els.accountStatus.classList.add("ok");
+    els.accountStatus.textContent = `Account ID: ${data.account_id}`;
+  } catch (err) {
+    els.accountStatus.classList.add("err");
+    els.accountStatus.textContent = `Account load failed: ${err.message}`;
+  }
+}
+
+els.accountReveal.addEventListener("click", () => {
+  const hidden = els.accountCode.classList.contains("hidden");
+  if (hidden && accountPairCode) {
+    els.accountCode.textContent = accountPairCode;
+    els.accountCode.classList.remove("hidden");
+    els.accountReveal.textContent = "🙈 Hide pairing code";
+  } else {
+    els.accountCode.classList.add("hidden");
+    els.accountCode.textContent = "";
+    els.accountReveal.textContent = "👁 Reveal pairing code";
+  }
+});
+
+els.accountCopy.addEventListener("click", async () => {
+  if (!accountPairCode) return;
+  try {
+    await navigator.clipboard.writeText(accountPairCode);
+    els.accountStatus.className = "import-status ok";
+    els.accountStatus.textContent = "Pairing code copied — paste it in the phone app's Sync card (Password or pairing code field).";
+  } catch {
+    els.accountReveal.click(); // clipboard blocked — show it for manual selection
+    els.accountStatus.className = "import-status err";
+    els.accountStatus.textContent = "Clipboard unavailable — the code is shown below, select and copy it manually.";
+  }
+});
+
+els.accountRotate.addEventListener("click", async () => {
+  els.accountStatus.className = "import-status";
+  els.accountStatus.textContent = "Rotating…";
+  try {
+    const data = await api("/api/auth/account/rotate", { method: "POST" });
+    accountPairCode = data.pair_code;
+    els.accountCode.classList.add("hidden");
+    els.accountCode.textContent = "";
+    els.accountReveal.textContent = "👁 Reveal pairing code";
+    els.accountStatus.classList.add("ok");
+    els.accountStatus.textContent = "New pairing key issued. Old codes no longer work; already-paired devices keep syncing.";
+  } catch (err) {
+    els.accountStatus.classList.add("err");
+    els.accountStatus.textContent = `Rotate failed: ${err.message}`;
+  }
+});
 
 function closeSettings() {
   els.settingsModal.classList.add("hidden");

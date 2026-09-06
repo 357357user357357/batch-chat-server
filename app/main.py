@@ -65,6 +65,11 @@ _run_migrations()
 _db = SessionLocal()
 try:
     load_overrides(_db)
+    # Create the portable account identity (id + pairing key) on first start;
+    # stable across restarts so devices can re-pair after a server move.
+    from app.services.account import ensure_account
+
+    ensure_account(_db)
     # Restore the 🔥 Cache keep-alive toggles the user enabled before a restart.
     try:
         import json as _json

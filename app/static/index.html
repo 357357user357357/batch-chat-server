@@ -241,6 +241,21 @@
 
       <hr class="modal-divider" />
       <p class="modal-hint">
+        <strong>Account &amp; pairing.</strong> This instance has a portable
+        identity — paste the pairing code on any new device (phone app → Sync
+        card) and it pairs <em>without the password</em> and pulls the whole
+        history. Works even after the server gets a new address.
+      </p>
+      <p id="account-status" class="import-status"></p>
+      <div class="modal-actions">
+        <button id="account-reveal" class="btn btn-ghost btn-small">👁 Reveal pairing code</button>
+        <button id="account-copy" class="btn btn-ghost btn-small">📋 Copy pairing code</button>
+        <button id="account-rotate" class="btn btn-ghost btn-small">🔄 New key</button>
+      </div>
+      <p id="account-code" class="account-code hidden"></p>
+
+      <hr class="modal-divider" />
+      <p class="modal-hint">
         <strong>Server migration.</strong> Download every key above as one
         file before shutting down this server, then restore it on the new
         one — no need to retype anything.

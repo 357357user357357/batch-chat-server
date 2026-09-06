@@ -59,6 +59,21 @@ class KeepaliveToggle(BaseModel):
     enabled: bool
 
 
+class PairRequest(BaseModel):
+    """Device pairing: the pasted pairing code (account_id|account_key,
+    optionally prefixed with the server origin). Replaces password sharing."""
+
+    code: str
+
+
+class AccountResponse(BaseModel):
+    """This instance's portable identity — shown in the web Settings modal."""
+
+    account_id: str
+    account_key: str
+    pair_code: str
+
+
 class LoginRequest(BaseModel):
     password: str
 

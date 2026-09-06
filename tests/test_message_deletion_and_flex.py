@@ -979,3 +979,62 @@ def test_sync_message_delete_endpoint():
             "SELECT id FROM conversations WHERE external_id='phone-del-dlg'").fetchone()[0],))
         conn.execute("DELETE FROM messages WHERE conversation_id=?", (dlg_id,))
         conn.execute("DELETE FROM conversations WHERE id=?", (dlg_id,))
+
+
+# ---------------------------------------------------------------
+# Portable account identity: pair a device without the password.
+# ---------------------------------------------------------------
+
+
+def test_account_is_stable_and_pair_code_works():
+    """The account id/key are generated once and survive restarts; a device
+    holding the pairing code gets a normal session without the password."""
+    headers = auth_headers()
+
+    acc1 = client.get("/api/auth/account", headers=headers).json()
+    acc2 = client.get("/api/auth/account", headers=headers).json()
+    assert acc1["account_id"] == acc2["account_id"]
+    assert acc1["account_key"] == acc2["account_key"]
+    assert acc1["account_id"].startswith("bc-")
+    assert acc1["account_id"] in acc1["pair_code"]
+
+    # Pair using the full code, exactly as the phone pastes it.
+    paired = client.post("/api/auth/pair", json={"code": acc1["pair_code"]})
+    assert paired.status_code == 200, paired.text
+    me = client.get(
+        "/api/auth/me",
+        headers={"Authorization": f"Bearer {paired.json()['token']}"},
+    )
+    assert me.status_code == 200
+
+    # A bare id|key code (no server prefix) pairs too.
+    bare = client.post(
+        "/api/auth/pair",
+        json={"code": f"{acc1['account_id']}|{acc1['account_key']}"},
+    )
+    assert bare.status_code == 200
+
+    # Wrong code is rejected like a wrong password.
+    bad = client.post("/api/auth/pair", json={"code": "bc-nope|wrong-key"})
+    assert bad.status_code == 401
+
+    # The account endpoint requires authentication.
+    assert client.get("/api/auth/account").status_code == 401
+
+
+def test_account_rotation_invalidates_old_codes():
+    """Rotating issues a fresh key: old pair codes stop working, the id stays,
+    and the new code pairs successfully."""
+    headers = auth_headers()
+    old = client.get("/api/auth/account", headers=headers).json()
+
+    new = client.post("/api/auth/account/rotate", headers=headers).json()
+    assert new["account_id"] == old["account_id"]
+    assert new["account_key"] != old["account_key"]
+
+    assert (
+        client.post("/api/auth/pair", json={"code": old["pair_code"]}).status_code
+        == 401
+    )
+    fresh = client.post("/api/auth/pair", json={"code": new["pair_code"]})
+    assert fresh.status_code == 200
