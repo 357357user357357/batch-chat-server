@@ -37,6 +37,10 @@ def _run_migrations() -> None:
             conn.execute(text("ALTER TABLE conversations ADD COLUMN model VARCHAR(255)"))
         if "deleted_at" not in existing:
             conn.execute(text("ALTER TABLE conversations ADD COLUMN deleted_at DATETIME"))
+        if "account_id" not in existing:
+            conn.execute(
+                text("ALTER TABLE conversations ADD COLUMN account_id VARCHAR(64)")
+            )
 
         if "keepalive_enabled" not in existing:
             conn.execute(text("ALTER TABLE conversations ADD COLUMN keepalive_enabled BOOLEAN DEFAULT 0"))
@@ -58,6 +62,16 @@ def _run_migrations() -> None:
             if "deleted_by" not in tomb_existing:
                 conn.execute(text("ALTER TABLE message_tombstones ADD COLUMN deleted_by VARCHAR(64)"))
 
+        if inspector.has_table("auth_tokens"):
+            tok_existing = {col["name"] for col in inspector.get_columns("auth_tokens")}
+            if "account_id" not in tok_existing:
+                conn.execute(text("ALTER TABLE auth_tokens ADD COLUMN account_id VARCHAR(64)"))
+
+        if inspector.has_table("batch_jobs"):
+            job_existing = {col["name"] for col in inspector.get_columns("batch_jobs")}
+            if "account_id" not in job_existing:
+                conn.execute(text("ALTER TABLE batch_jobs ADD COLUMN account_id VARCHAR(64)"))
+
 
 Base.metadata.create_all(bind=engine)
 _run_migrations()
@@ -65,11 +79,25 @@ _run_migrations()
 _db = SessionLocal()
 try:
     load_overrides(_db)
-    # Create the portable account identity (id + pairing key) on first start;
-    # stable across restarts so devices can re-pair after a server move.
-    from app.services.account import ensure_account
+    # Multi-account: create the accounts table identity (owner migrated from
+    # the legacy app_settings rows — same id + key, so existing pair codes
+    # keep working), then stamp every pre-existing row with the owner's id.
+    from app.services.account import ensure_owner_account
 
-    ensure_account(_db)
+    _owner = ensure_owner_account(_db)
+    _db.execute(
+        text("UPDATE conversations SET account_id = :aid WHERE account_id IS NULL"),
+        {"aid": _owner.id},
+    )
+    _db.execute(
+        text("UPDATE batch_jobs SET account_id = :aid WHERE account_id IS NULL"),
+        {"aid": _owner.id},
+    )
+    _db.execute(
+        text("UPDATE auth_tokens SET account_id = :aid WHERE account_id IS NULL"),
+        {"aid": _owner.id},
+    )
+    _db.commit()
     # Restore the 🔥 Cache keep-alive toggles the user enabled before a restart.
     try:
         import json as _json

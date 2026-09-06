@@ -5,9 +5,9 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
 from app.database import get_db
-from app.models import AuthToken, BatchItem, BatchJob
+from app.models import BatchItem, BatchJob
 from app.schemas import BatchItemOut, BatchJobOut, BatchSubmitRequest
-from app.security import get_current_token
+from app.security import get_account_id
 from app.services.jsonl_batches import JsonlParseError, parse_jsonl
 from app.services.openrouter import (
     DEFAULT_BATCH_MODEL,
@@ -42,7 +42,7 @@ def submit_batch(
     payload: BatchSubmitRequest,
     background: BackgroundTasks,
     db: Session = Depends(get_db),
-    _: AuthToken = Depends(get_current_token),
+    account_id: str = Depends(get_account_id),
 ) -> BatchJobOut:
     """Parse a .jsonl, submit to the OpenRouter async Batch API, and start a
     background poller so the job finalizes by itself."""
@@ -59,7 +59,7 @@ def submit_batch(
     model = payload.model.strip() or DEFAULT_BATCH_MODEL
     title = (payload.title or requests[0]["custom_id"] or "Batch")[:255]
 
-    job = BatchJob(model=model, title=title, status="pending")
+    job = BatchJob(model=model, title=title, status="pending", account_id=account_id)
     job.requests_json = json.dumps(requests, ensure_ascii=False)
     job.total_items = len(requests)
 
@@ -100,11 +100,12 @@ def submit_batch(
 @router.get("", response_model=list[BatchJobOut])
 def list_batches(
     db: Session = Depends(get_db),
-    _: AuthToken = Depends(get_current_token),
+    account_id: str = Depends(get_account_id),
 ) -> list[BatchJobOut]:
     jobs = db.scalars(
         select(BatchJob)
         .options(selectinload(BatchJob.items))
+        .where(BatchJob.account_id == account_id)
         .order_by(BatchJob.id.desc())
     ).all()
     return [_job_out(job) for job in jobs]
@@ -114,9 +115,9 @@ def list_batches(
 def get_batch_job(
     job_id: int,
     db: Session = Depends(get_db),
-    _: AuthToken = Depends(get_current_token),
+    account_id: str = Depends(get_account_id),
 ) -> BatchJobOut:
-    job = _fetch_job(db, job_id)
+    job = _fetch_job(db, job_id, account_id)
     return _job_out(job)
 
 
@@ -125,10 +126,10 @@ def poll_batch_job(
     job_id: int,
     background: BackgroundTasks,
     db: Session = Depends(get_db),
-    _: AuthToken = Depends(get_current_token),
+    account_id: str = Depends(get_account_id),
 ) -> BatchJobOut:
     """Force a poll of the OpenRouter batch right now (then return)."""
-    _fetch_job(db, job_id)
+    _fetch_job(db, job_id, account_id)
     background.add_task(poll_job, job_id)
     return _job_out(db.scalar(
         select(BatchJob).options(selectinload(BatchJob.items)).where(BatchJob.id == job_id)
@@ -139,16 +140,21 @@ def poll_batch_job(
 def delete_batch_job(
     job_id: int,
     db: Session = Depends(get_db),
-    _: AuthToken = Depends(get_current_token),
+    account_id: str = Depends(get_account_id),
 ) -> None:
-    job = _fetch_job(db, job_id)
+    job = _fetch_job(db, job_id, account_id)
     db.delete(job)
     db.commit()
 
 
-def _fetch_job(db: Session, job_id: int) -> BatchJob:
+def _fetch_job(db: Session, job_id: int, account_id: str) -> BatchJob:
     job = db.scalar(
-        select(BatchJob).options(selectinload(BatchJob.items)).where(BatchJob.id == job_id)
+        select(BatchJob)
+        .options(selectinload(BatchJob.items))
+        .where(
+            BatchJob.id == job_id,
+            BatchJob.account_id == account_id,
+        )
     )
     if job is None:
         raise HTTPException(status_code=404, detail="Batch job not found")

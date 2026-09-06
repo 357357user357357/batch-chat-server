@@ -18,6 +18,7 @@
       <h1>Batch Chat</h1>
       <p class="login-sub">Log in to your chat server</p>
       <input id="login-password" type="password" placeholder="Password" autocomplete="current-password" required />
+      <input id="login-account" type="text" placeholder="Account ID (optional — e.g. bc-…)" autocomplete="off" spellcheck="false" />
       <button type="submit" class="btn btn-primary">Log in</button>
       <p id="login-error" class="error-text hidden"></p>
     </form>
@@ -253,6 +254,20 @@
         <button id="account-rotate" class="btn btn-ghost btn-small">🔄 New key</button>
       </div>
       <p id="account-code" class="account-code hidden"></p>
+
+      <hr class="modal-divider" />
+      <p class="modal-hint">
+        <strong>Client accounts.</strong> Create an isolated account for another
+        person/device: it gets its own pairing code and sees <em>only its
+        own</em> dialogs — never yours and never the provider keys above.
+        Creating one requires the master password.
+      </p>
+      <div class="account-create-row">
+        <input id="account-label" type="text" placeholder="Label (e.g. Alice)" autocomplete="off" spellcheck="false" />
+        <input id="account-admin-password" type="password" placeholder="Master password" autocomplete="off" />
+        <button id="account-create" class="btn btn-ghost btn-small">➕ Create client</button>
+      </div>
+      <p id="account-list" class="import-status"></p>
 
       <hr class="modal-divider" />
       <p class="modal-hint">

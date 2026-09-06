@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session, selectinload
 
 from app.database import get_db
 from app.device import device_label
-from app.models import AppSetting, AuthToken, Conversation, Message, MessageTombstone, utcnow
+from app.models import AppSetting, Conversation, Message, MessageTombstone, utcnow
 from app.schemas import (
     ConversationCreate,
     ConversationDetail,
@@ -16,14 +16,19 @@ from app.schemas import (
     MessageCreate,
     MessageOut,
 )
-from app.security import get_current_token
+from app.security import get_account_id, get_current_token
 from app.services import cache_keeper
 
 router = APIRouter(prefix="/api/conversations", tags=["conversations"])
 
 
 @router.get("", response_model=list[ConversationSummary])
-def list_conversations(db: Session = Depends(get_db), _: AuthToken = Depends(get_current_token)):
+def list_conversations(
+    db: Session = Depends(get_db),
+    account_id: str = Depends(get_account_id),
+) -> list[ConversationSummary]:
+    # Data isolation: only the calling account's dialogs. Messages/tombstones
+    # inherit the scope through conversation_id.
     rows = db.execute(
         select(
             Conversation,
@@ -37,7 +42,10 @@ def list_conversations(db: Session = Depends(get_db), _: AuthToken = Depends(get
                 Message.deleted_at.is_(None),
             ),
         )
-        .where(Conversation.deleted_at.is_(None))
+        .where(
+            Conversation.deleted_at.is_(None),
+            Conversation.account_id == account_id,
+        )
         .group_by(Conversation.id)
         .order_by(Conversation.updated_at.desc())
     ).all()
@@ -64,9 +72,9 @@ def create_conversation(
     payload: ConversationCreate,
     request: Request,
     db: Session = Depends(get_db),
-    _: AuthToken = Depends(get_current_token),
+    account_id: str = Depends(get_account_id),
 ) -> ConversationDetail:
-    conv = Conversation(title=payload.title)
+    conv = Conversation(title=payload.title, account_id=account_id)
     # Audit trail: whose record it is (and the web/modification date is
     # updated_at, maintained automatically).
     device = device_label(request)
@@ -82,9 +90,9 @@ def create_conversation(
 def get_conversation(
     conversation_id: int,
     db: Session = Depends(get_db),
-    _: AuthToken = Depends(get_current_token),
+    account_id: str = Depends(get_account_id),
 ) -> ConversationDetail:
-    conv = _fetch_conversation(db, conversation_id)
+    conv = _fetch_conversation(db, conversation_id, account_id)
     detail = ConversationDetail.model_validate(conv)
     detail.keepalive = bool(conv.keepalive_enabled)
     # Hide individually deleted Q/A (they stay archived in the DB only).
@@ -100,9 +108,9 @@ def rename_conversation(
     conversation_id: int,
     payload: ConversationRename,
     db: Session = Depends(get_db),
-    _: AuthToken = Depends(get_current_token),
+    account_id: str = Depends(get_account_id),
 ) -> ConversationDetail:
-    conv = _fetch_conversation(db, conversation_id)
+    conv = _fetch_conversation(db, conversation_id, account_id)
     conv.title = payload.title
     conv.updated_at = utcnow()
     db.commit()
@@ -115,12 +123,12 @@ def delete_conversation(
     conversation_id: int,
     request: Request,
     db: Session = Depends(get_db),
-    _: AuthToken = Depends(get_current_token),
+    account_id: str = Depends(get_account_id),
 ) -> None:
     # Soft delete (tombstone) without wiping the messages: other synced
     # devices learn about the deletion the next time they pull (and drop their
     # copy), while the correspondence itself stays archived in the DB.
-    conv = _fetch_conversation(db, conversation_id)
+    conv = _fetch_conversation(db, conversation_id, account_id)
     conv.deleted_at = utcnow()
     conv.updated_at = utcnow()
     conv.deleted_by = device_label(request)
@@ -133,7 +141,7 @@ def delete_message(
     message_id: int,
     request: Request,
     db: Session = Depends(get_db),
-    _: AuthToken = Depends(get_current_token),
+    account_id: str = Depends(get_account_id),
 ) -> None:
     """Delete one question/answer inside a dialogue (web UI).
 
@@ -142,7 +150,7 @@ def delete_message(
     uploads the dialog's full local message list) cannot resurrect it.
     Other devices drop the message on their next sync pull.
     """
-    conv = _fetch_conversation(db, conversation_id)
+    conv = _fetch_conversation(db, conversation_id, account_id)
     msg = db.scalar(
         select(Message).where(
             Message.id == message_id,
@@ -171,9 +179,9 @@ def add_message(
     conversation_id: int,
     payload: MessageCreate,
     db: Session = Depends(get_db),
-    _: AuthToken = Depends(get_current_token),
+    account_id: str = Depends(get_account_id),
 ) -> MessageOut:
-    _fetch_conversation(db, conversation_id)
+    _fetch_conversation(db, conversation_id, account_id)
     msg = Message(
         conversation_id=conversation_id,
         role=payload.role,
@@ -191,7 +199,7 @@ def toggle_keepalive(
     conversation_id: int,
     payload: KeepaliveToggle,
     db: Session = Depends(get_db),
-    _: AuthToken = Depends(get_current_token),
+    account_id: str = Depends(get_account_id),
 ) -> dict:
     """🔥 Cache toggle: enable/disable prompt-cache warm-up for one dialog.
 
@@ -199,7 +207,7 @@ def toggle_keepalive(
     (near-empty requests every 45 min) for the configured keep-alive window.
     The flag is persisted, so it survives server restarts.
     """
-    conv = _fetch_conversation(db, conversation_id)
+    conv = _fetch_conversation(db, conversation_id, account_id)
     conv.keepalive_enabled = payload.enabled
     conv.updated_at = utcnow()
     cache_keeper.set_enabled(conv.id, payload.enabled)
@@ -226,7 +234,7 @@ def toggle_keepalive(
 @router.get("/keepalive/pings")
 def keepalive_pings(
     db: Session = Depends(get_db),
-    _: AuthToken = Depends(get_current_token),
+    account_id: str = Depends(get_account_id),
 ) -> dict:
     """Verification feed for the 🔥 Cache keep-alive: recent warm-up pings
     (dialog, model, when, ok/failed) WITHOUT creating any stub dialogs."""
@@ -240,7 +248,14 @@ def keepalive_pings(
         }
         for p in cache_keeper.ping_log()
     ]
-    ids = {p["conversation_id"] for p in pings} | set(cache_keeper.enabled_ids())
+    # Account scope: only pings/titles for conversations this account owns.
+    owned_ids = set(
+        db.scalars(
+            select(Conversation.id).where(Conversation.account_id == account_id)
+        ).all()
+    )
+    pings = [p for p in pings if p["conversation_id"] in owned_ids]
+    ids = {p["conversation_id"] for p in pings}
     titles: dict[int, str] = {}
     if ids:
         titles = {
@@ -259,6 +274,7 @@ def keepalive_pings(
         select(Conversation.id, Conversation.title).where(
             Conversation.keepalive_enabled.is_(True),
             Conversation.deleted_at.is_(None),
+            Conversation.account_id == account_id,
         )
     ).all()
     return {
@@ -270,11 +286,19 @@ def keepalive_pings(
     }
 
 
-def _fetch_conversation(db: Session, conversation_id: int) -> Conversation:
+def _fetch_conversation(
+    db: Session, conversation_id: int, account_id: str
+) -> Conversation:
+    """Fetch a live dialog scoped to the calling account — a dialog owned by
+    another account is indistinguishable from a missing one (404)."""
     conv = db.scalar(
         select(Conversation)
         .options(selectinload(Conversation.messages))
-        .where(Conversation.id == conversation_id, Conversation.deleted_at.is_(None))
+        .where(
+            Conversation.id == conversation_id,
+            Conversation.deleted_at.is_(None),
+            Conversation.account_id == account_id,
+        )
     )
     if conv is None:
         raise HTTPException(status_code=404, detail="Conversation not found")

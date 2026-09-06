@@ -493,6 +493,26 @@ input:focus, textarea:focus { outline: 2px solid var(--accent); outline-offset: 
   user-select: all;
 }
 
+/* Client-account creation row (Settings modal). */
+.account-create-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin: 8px 0;
+}
+
+.account-create-row input {
+  flex: 1 1 140px;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 13px;
+}
+
 .import-status { font-size: 13px; min-height: 18px; }
 .import-status.ok { color: var(--success); }
 .import-status.err { color: var(--error); }

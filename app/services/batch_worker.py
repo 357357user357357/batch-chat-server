@@ -96,6 +96,7 @@ def _create_conversation(db, job: BatchJob) -> None:
         kind="batch",
         model=job.model,
         title=job.title,
+        account_id=job.account_id,
     )
     db.add(conv)
     db.flush()

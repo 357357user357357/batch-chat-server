@@ -8,14 +8,14 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.device import device_label
-from app.models import AuthToken, Conversation, Message, utcnow
+from app.models import Conversation, Message, utcnow
 from app.schemas import (
     ChatRequest,
     ChatResponse,
     ChatResponseItem,
     MessageOut,
 )
-from app.security import get_current_token
+from app.security import get_account_id
 from app.services import cache_keeper, tavily
 from app.services.providers import ProviderError, chat_completion, default_models
 from app.services import openrouter
@@ -72,17 +72,24 @@ def send_chat(
     payload: ChatRequest,
     request: Request,
     db: Session = Depends(get_db),
-    _: AuthToken = Depends(get_current_token),
+    account_id: str = Depends(get_account_id),
 ) -> ChatResponse:
-    # 1. Find or create the conversation
+    # 1. Find or create the conversation (scoped to the calling account)
     if payload.conversation_id is not None:
-        conv = db.get(Conversation, payload.conversation_id)
-        if conv is None or conv.deleted_at is not None:
+        conv = db.scalar(
+            select(Conversation).where(
+                Conversation.id == payload.conversation_id,
+                Conversation.deleted_at.is_(None),
+                Conversation.account_id == account_id,
+            )
+        )
+        if conv is None:
             raise HTTPException(status_code=404, detail="Conversation not found")
     else:
         title = (payload.user_message[:50] + "…") if len(payload.user_message) > 50 else payload.user_message
         device = device_label(request)
         conv = Conversation(title=title[:255] or "New chat", kind="chat",
+                            account_id=account_id,
                             origin_device=device, modified_by=device)
         db.add(conv)
         db.commit()

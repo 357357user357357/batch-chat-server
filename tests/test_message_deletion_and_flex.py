@@ -1038,3 +1038,113 @@ def test_account_rotation_invalidates_old_codes():
     )
     fresh = client.post("/api/auth/pair", json={"code": new["pair_code"]})
     assert fresh.status_code == 200
+
+
+# ---------------------------------------------------------------------------
+# Multi-account support: isolated clients, per-account data, owner gating.
+# ---------------------------------------------------------------------------
+
+
+def _pair_headers(pair_code: str) -> dict:
+    resp = client.post("/api/auth/pair", json={"code": pair_code})
+    assert resp.status_code == 200, resp.text
+    return {"Authorization": f"Bearer {resp.json()['token']}"}
+
+
+def test_multi_account_isolation_and_pairing():
+    # Owner logs in with the master password (single account → no id needed).
+    owner = auth_headers()
+    # Owner's dialog.
+    conv_owner = client.post(
+        "/api/conversations", headers=owner, json={"title": "owner dlg"}
+    ).json()
+    # Create an isolated client account with the master password.
+    created = client.post(
+        "/api/auth/accounts",
+        json={"admin_password": "test", "label": "alice"},
+    )
+    assert created.status_code == 201, created.text
+    pair_code = created.json()["pair_code"]
+    alice = _pair_headers(pair_code)
+    # Alice pairs through the code and gets her own account id (not owner's).
+    me = client.get("/api/auth/me", headers=alice).json()
+    assert me["account_id"] != client.get("/api/auth/account", headers=owner).json()["account_id"]
+    # Alice sees no owner dialogs and creates her own.
+    assert client.get("/api/conversations", headers=alice).json() == []
+    conv_alice = client.post(
+        "/api/conversations", headers=alice, json={"title": "alice dlg"}
+    ).json()
+    # Cross-account reads are impossible: foreign dialog == missing (404).
+    assert client.get(f"/api/conversations/{conv_owner['id']}", headers=alice).status_code == 404
+    assert client.get(f"/api/conversations/{conv_alice['id']}", headers=owner).status_code == 404
+    # Listings contain only each account's own dialogs.
+    owner_titles = [c["title"] for c in client.get("/api/conversations", headers=owner).json()]
+    alice_titles = [c["title"] for c in client.get("/api/conversations", headers=alice).json()]
+    assert "alice dlg" not in owner_titles
+    assert "owner dlg" not in alice_titles
+    # Chat into a foreign dialog is impossible.
+    chat = client.post(
+        "/api/chat/send",
+        headers=alice,
+        json={"user_message": "hi", "models": ["m"], "conversation_id": conv_owner["id"]},
+    )
+    assert chat.status_code == 404
+    # Push/pull scope: alice pushes a dialog, owner's pull must not see it.
+    pushed = client.post(
+        "/api/sync/push",
+        headers=alice,
+        json={"dialogs": [{"id": "alice-local-1", "title": "alice sync",
+                           "model": "m", "messages": [{"role": "user", "content": "q"}]}]},
+    )
+    assert pushed.status_code == 200, pushed.text
+    owner_ext = {c["external_id"] for c in client.get("/api/sync/pull", headers=owner).json()["conversations"]}
+    alice_ext = {c["external_id"] for c in client.get("/api/sync/pull", headers=alice).json()["conversations"]}
+    assert "alice-local-1" not in owner_ext
+    assert "alice-local-1" in alice_ext
+
+
+def test_settings_owner_only_and_backup():
+    owner = auth_headers()
+    created = client.post(
+        "/api/auth/accounts", json={"admin_password": "test", "label": "bob"}
+    )
+    assert created.status_code == 201
+    bob = _pair_headers(created.json()["pair_code"])
+    # A secondary client account can never read or change provider keys.
+    assert client.get("/api/settings", headers=bob).status_code == 403
+    assert client.put("/api/settings", headers=bob, json={"openrouter_api_key": "x"}).status_code == 403
+    assert client.get("/api/settings/backup", headers=bob).status_code == 403
+    assert client.get("/api/settings", headers=owner).status_code == 200
+    # Wrong master password is rejected (and counted as a login failure).
+    assert client.post(
+        "/api/auth/accounts", json={"admin_password": "nope", "label": "x"}
+    ).status_code == 401
+    # The account list shows all accounts without secrets.
+    listed = client.get("/api/auth/accounts", headers=owner).json()
+    assert len(listed) >= 3  # owner + alice + bob
+    assert all("account_key" not in a for a in listed)
+
+
+def test_login_without_account_id_lands_on_owner():
+    # Even with several accounts present (created above), a bare master-
+    # password login always resolves to the OWNER account — the master
+    # password is the owner's credential.
+    owner = auth_headers()
+    owner_id = client.get("/api/auth/account", headers=owner).json()["account_id"]
+    bare = client.post("/api/auth/login", json={"password": "test"})
+    assert bare.status_code == 200
+    me = client.get(
+        "/api/auth/me",
+        headers={"Authorization": f"Bearer {bare.json()['token']}"},
+    ).json()
+    assert me["account_id"] == owner_id
+    # An explicit non-owner account_id with the master password also works
+    # (accounts without their own password accept the master password).
+    listed = client.get("/api/auth/accounts", headers=owner).json()
+    other = next(a["account_id"] for a in listed if a["account_id"] != owner_id)
+    ok = client.post("/api/auth/login", json={"password": "test", "account_id": other})
+    assert ok.status_code == 200
+    # Unknown account id → 404.
+    assert client.post(
+        "/api/auth/login", json={"password": "test", "account_id": "bc-nope"}
+    ).status_code == 404

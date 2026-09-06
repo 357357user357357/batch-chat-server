@@ -3,13 +3,13 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models import AuthToken, Conversation, Message
+from app.models import Conversation, Message
 from app.schemas import (
     ImportRequest,
     ImportResponse,
     PhoneImportRequest,
 )
-from app.security import get_current_token
+from app.security import get_account_id
 from app.services.phone_sync import batch_label, batch_messages, dialog_messages, title_default
 
 router = APIRouter(prefix="/api/import", tags=["import"])
@@ -19,7 +19,7 @@ router = APIRouter(prefix="/api/import", tags=["import"])
 def import_conversations(
     payload: ImportRequest,
     db: Session = Depends(get_db),
-    _: AuthToken = Depends(get_current_token),
+    account_id: str = Depends(get_account_id),
 ) -> ImportResponse:
     """Bulk-import conversations (generic format)."""
     conversations_created = 0
@@ -31,6 +31,7 @@ def import_conversations(
             kind=item.kind,
             model=item.model,
             title=title_default(item.title, "Imported chat"),
+            account_id=account_id,
         )
         db.add(conv)
         db.flush()
@@ -57,7 +58,7 @@ def import_conversations(
 def import_phone_data(
     payload: PhoneImportRequest,
     db: Session = Depends(get_db),
-    _: AuthToken = Depends(get_current_token),
+    account_id: str = Depends(get_account_id),
 ) -> ImportResponse:
     """Import a paste of Android app AsyncStorage data.
 
@@ -68,7 +69,12 @@ def import_phone_data(
     messages_created = 0
 
     existing_ext = {
-        (ext or "") for ext in db.scalars(select(Conversation.external_id)).all()
+        (ext or "")
+        for ext in db.scalars(
+            select(Conversation.external_id).where(
+                Conversation.account_id == account_id
+            )
+        ).all()
     }
 
     # 1. Regular chat dialogs
@@ -78,6 +84,7 @@ def import_phone_data(
         messages = dialog_messages(dialog)
         _store_conversation(
             db,
+            account_id=account_id,
             external_id=dialog.id,
             kind="chat",
             model=dialog.model,
@@ -96,6 +103,7 @@ def import_phone_data(
         messages = batch_messages(item)
         _store_conversation(
             db,
+            account_id=account_id,
             external_id=item.id,
             kind="batch",
             model=item.model,
@@ -117,6 +125,7 @@ def import_phone_data(
 def _store_conversation(
     db: Session,
     *,
+    account_id: str,
     external_id: str | None,
     kind: str,
     model: str | None,
@@ -128,6 +137,7 @@ def _store_conversation(
         kind=kind,
         model=model,
         title=title,
+        account_id=account_id,
     )
     db.add(conv)
     db.flush()

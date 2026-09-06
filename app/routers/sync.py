@@ -25,7 +25,7 @@ from sqlalchemy.orm import Session, selectinload
 
 from app.database import get_db
 from app.device import device_label
-from app.models import AuthToken, Conversation, Message, MessageTombstone, utcnow
+from app.models import Conversation, Message, MessageTombstone, utcnow
 from app.schemas import (
     SyncConversationOut,
     SyncMessage,
@@ -33,8 +33,9 @@ from app.schemas import (
     SyncPushRequest,
     SyncPushResponse,
 )
-from app.security import get_current_token
+from app.security import get_account_id
 from app.services.phone_sync import batch_messages, dialog_messages, title_default
+from app.services.account import default_account_id
 from app.services.settings_store import adopt_missing_keys, syncable_keys
 
 router = APIRouter(prefix="/api/sync", tags=["sync"])
@@ -44,13 +45,15 @@ router = APIRouter(prefix="/api/sync", tags=["sync"])
 def pull(
     since: str | None = None,
     db: Session = Depends(get_db),
-    _: AuthToken = Depends(get_current_token),
+    account_id: str = Depends(get_account_id),
 ) -> SyncPullResponse:
     server_time = utcnow()
 
     from sqlalchemy import or_
 
     query = select(Conversation).options(selectinload(Conversation.messages))
+    # Data isolation: only the calling account's dialogs are ever returned.
+    query = query.where(Conversation.account_id == account_id)
     if since:
         since_dt = _parse_since(since)
         # Tombstoned (deleted) dialogs are ALWAYS included, regardless of the
@@ -105,10 +108,13 @@ def pull(
                 ],
             )
         )
+    # Provider keys are the OWNER's server credentials — a secondary client
+    # account gets no keys, only the owner account does.
+    keys = syncable_keys() if account_id == default_account_id(db) else {}
     return SyncPullResponse(
         server_time=server_time,
         conversations=out,
-        keys=syncable_keys(),
+        keys=keys,
     )
 
 
@@ -117,7 +123,7 @@ def push(
     payload: SyncPushRequest,
     request: Request,
     db: Session = Depends(get_db),
-    _: AuthToken = Depends(get_current_token),
+    account_id: str = Depends(get_account_id),
 ) -> SyncPushResponse:
     created = 0
     updated = 0
@@ -131,7 +137,7 @@ def push(
         messages = dialog_messages(dialog)
         status = _upsert(db, external_id=dialog.id, kind="chat", model=dialog.model,
                          title=title_default(dialog.title, "Imported chat"), messages=messages,
-                         device=device)
+                         device=device, account_id=account_id)
         if status == "updated":
             updated += 1
         elif status == "skipped_deleted":
@@ -145,7 +151,7 @@ def push(
         messages = batch_messages(item)
         status = _upsert(db, external_id=item.id, kind="batch", model=item.model,
                          title=title_default(item.title, "Batch"), messages=messages,
-                         device=device)
+                         device=device, account_id=account_id)
         if status == "updated":
             updated += 1
         elif status == "skipped_deleted":
@@ -157,7 +163,10 @@ def push(
         rows = db.scalars(
             select(Conversation)
             .options(selectinload(Conversation.messages))
-            .where(Conversation.external_id.in_(payload.deleted_external_ids))
+            .where(
+                Conversation.external_id.in_(payload.deleted_external_ids),
+                Conversation.account_id == account_id,
+            )
         ).all()
         for conv in rows:
             if conv.deleted_at is not None:
@@ -171,8 +180,10 @@ def push(
             deleted += 1
 
     # Keys a device offered fill gaps on the server (server-first: an existing
-    # server key is never overwritten).
-    adopt_missing_keys(db, payload.keys)
+    # server key is never overwritten). Owner-only: a secondary client account
+    # cannot inject provider credentials into the instance.
+    if account_id == default_account_id(db):
+        adopt_missing_keys(db, payload.keys)
 
     db.commit()
     return SyncPushResponse(created=created, updated=updated, deleted=deleted,
@@ -186,6 +197,7 @@ def _upsert(
     kind: str,
     model: str | None,
     title: str,
+    account_id: str,
     messages: list[tuple[str, str, str | None]],
     device: str = "unknown",
 ) -> str:
@@ -212,11 +224,15 @@ def _upsert(
     conv = db.scalar(
         select(Conversation)
         .options(selectinload(Conversation.messages))
-        .where(Conversation.external_id == external_id)
+        .where(
+            Conversation.external_id == external_id,
+            Conversation.account_id == account_id,
+        )
     )
     is_new = conv is None
     if is_new:
         conv = Conversation(external_id=external_id, kind=kind, model=model, title=title,
+                            account_id=account_id,
                             origin_device=device, modified_by=device)
         db.add(conv)
         db.flush()
@@ -277,7 +293,7 @@ def delete_synced_message(
     message_id: int,
     request: Request,
     db: Session = Depends(get_db),
-    _: AuthToken = Depends(get_current_token),
+    account_id: str = Depends(get_account_id),
 ) -> dict:
     """Delete one Q/A from a synced dialog (phone UI).
 
@@ -291,6 +307,7 @@ def delete_synced_message(
         select(Conversation).where(
             Conversation.external_id == external_id,
             Conversation.deleted_at.is_(None),
+            Conversation.account_id == account_id,
         )
     )
     if conv is None:

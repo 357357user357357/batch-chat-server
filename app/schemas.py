@@ -76,6 +76,24 @@ class AccountResponse(BaseModel):
 
 class LoginRequest(BaseModel):
     password: str
+    # Which account to log into. Optional for backward compatibility: with a
+    # single account it is inferred; with several, it is required.
+    account_id: str | None = None
+
+
+class AccountCreateRequest(BaseModel):
+    """Owner/admin request to create an additional client account."""
+
+    admin_password: str
+    label: str | None = Field(default=None, max_length=64)
+
+
+class AccountSummary(BaseModel):
+    """Account listing entry (no secrets)."""
+
+    account_id: str
+    label: str | None = None
+    created_at: datetime | None = None
 
 
 class LoginResponse(BaseModel):

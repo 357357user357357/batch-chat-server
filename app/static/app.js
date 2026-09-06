@@ -28,6 +28,7 @@ const els = {
   appView: $("#app-view"),
   loginForm: $("#login-form"),
   loginPassword: $("#login-password"),
+  loginAccount: $("#login-account"),
   loginError: $("#login-error"),
   conversationList: $("#conversation-list"),
   newChatBtn: $("#new-chat-btn"),
@@ -95,6 +96,10 @@ const els = {
   accountReveal: $("#account-reveal"),
   accountCopy: $("#account-copy"),
   accountRotate: $("#account-rotate"),
+  accountLabel: $("#account-label"),
+  accountAdminPassword: $("#account-admin-password"),
+  accountCreate: $("#account-create"),
+  accountList: $("#account-list"),
   accountCode: $("#account-code"),
   settingsBackupDownload: $("#settings-backup-download"),
   settingsBackupRestoreBtn: $("#settings-backup-restore-btn"),
@@ -133,9 +138,12 @@ els.loginForm.addEventListener("submit", async (e) => {
   e.preventDefault();
   els.loginError.classList.add("hidden");
   try {
+    const body = { password: els.loginPassword.value };
+    const acct = els.loginAccount.value.trim();
+    if (acct) body.account_id = acct;
     const data = await api("/api/auth/login", {
       method: "POST",
-      body: JSON.stringify({ password: els.loginPassword.value }),
+      body: JSON.stringify(body),
     });
     state.token = data.token;
     localStorage.setItem("bc_token", data.token);
@@ -1339,7 +1347,52 @@ async function loadAccount() {
     els.accountStatus.classList.add("err");
     els.accountStatus.textContent = `Account load failed: ${err.message}`;
   }
+  // Account list (ids + labels only, no secrets).
+  try {
+    const rows = await api("/api/auth/accounts");
+    if (rows.length > 1) {
+      els.accountList.textContent =
+        "Accounts: " + rows.map((a) => a.label ? `${a.id} (${a.label})` : a.id).join(", ");
+    } else {
+      els.accountList.textContent = "";
+    }
+  } catch {
+    els.accountList.textContent = "";
+  }
 }
+
+els.accountCreate.addEventListener("click", async () => {
+  const adminPassword = els.accountAdminPassword.value;
+  if (!adminPassword) {
+    els.accountList.className = "import-status err";
+    els.accountList.textContent = "Enter the master password to create a client account.";
+    return;
+  }
+  els.accountCreate.disabled = true;
+  els.accountList.className = "import-status";
+  els.accountList.textContent = "Creating…";
+  try {
+    const data = await api("/api/auth/accounts", {
+      method: "POST",
+      body: JSON.stringify({
+        admin_password: adminPassword,
+        label: els.accountLabel.value.trim() || null,
+      }),
+    });
+    els.accountAdminPassword.value = "";
+    els.accountLabel.value = "";
+    els.accountList.className = "import-status ok";
+    els.accountList.textContent = `Created ${data.account_id} — its pairing code is shown below; copy it now.`;
+    els.accountCode.textContent = data.pair_code;
+    els.accountCode.classList.remove("hidden");
+    await loadAccount();
+  } catch (err) {
+    els.accountList.className = "import-status err";
+    els.accountList.textContent = `Create failed: ${err.message}`;
+  } finally {
+    els.accountCreate.disabled = false;
+  }
+});
 
 els.accountReveal.addEventListener("click", () => {
   const hidden = els.accountCode.classList.contains("hidden");

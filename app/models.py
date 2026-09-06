@@ -12,12 +12,42 @@ def utcnow() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
+class Account(Base):
+    """A client account on this instance.
+
+    Multi-account: every account is a full isolated client — its own pair
+    key (pairing code), optional own password, and its own data (dialogs,
+    messages, batches are stamped with `account_id` and every query is
+    filtered by the token's account). The FIRST account is the instance
+    owner (migrated from the legacy app_settings identity): only the owner
+    manages provider credentials. Accounts survive IP changes and server
+    moves — copy the pair code to any new device.
+    """
+
+    __tablename__ = "accounts"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    # The pairing secret (full token entropy). Verifying a pair code looks
+    # the account up by id and compares this value.
+    key: Mapped[str] = mapped_column(String(128))
+    label: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # Optional per-account password (pbkdf2 hash). When unset, the account
+    # logs in with the instance master password (settings.app_password).
+    password_hash: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
 class AuthToken(Base):
     __tablename__ = "auth_tokens"
 
     token: Mapped[str] = mapped_column(String(64), primary_key=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     expires_at: Mapped[datetime] = mapped_column(DateTime)
+    # Which account this session belongs to (data isolation). Legacy rows
+    # (NULL) are bound to the owner account on first use.
+    account_id: Mapped[str | None] = mapped_column(
+        String(64), ForeignKey("accounts.id"), nullable=True, index=True
+    )
 
 
 class AppSetting(Base):
@@ -53,6 +83,11 @@ class Conversation(Base):
     origin_device: Mapped[str | None] = mapped_column(String(64), nullable=True)
     modified_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
     deleted_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # Data isolation: which account owns this dialog. Messages and
+    # tombstones inherit the scope through conversation_id.
+    account_id: Mapped[str | None] = mapped_column(
+        String(64), ForeignKey("accounts.id"), nullable=True, index=True
+    )
     # Prompt-cache keep-alive toggle (🔥 Cache button in the web UI): when on,
     # the keeper sends near-empty pings for this dialog's cached prefix.
     keepalive_enabled: Mapped[bool] = mapped_column(default=False)
@@ -138,6 +173,9 @@ class BatchJob(Base):
     updated_at: Mapped[datetime | None] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
     conversation_id: Mapped[int | None] = mapped_column(
         ForeignKey("conversations.id"), nullable=True)
+    # Data isolation: which account submitted this batch.
+    account_id: Mapped[str | None] = mapped_column(
+        String(64), ForeignKey("accounts.id"), nullable=True, index=True)
 
     conversation: Mapped[Optional["Conversation"]] = relationship()
 
