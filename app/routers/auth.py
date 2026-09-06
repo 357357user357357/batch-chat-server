@@ -206,7 +206,10 @@ def register(payload: RegisterRequest, request: Request, db: Session = Depends(g
             detail="Could not send the confirmation e-mail — check SMTP settings",
         )
     record_login_success(request)
-    return {"detail": "Confirmation e-mail sent — check your inbox (and spam)"}
+    return {
+        "detail": "Confirmation e-mail sent — check your inbox AND the Spam "
+        "folder (it can land there); the link is valid for 24 hours",
+    }
 
 
 @router.get("/auth/confirm-email")
@@ -244,7 +247,7 @@ def resend_confirmation(payload: RegisterRequest, request: Request, db: Session 
                             f"Confirm your e-mail (valid 24 h):\n\n{link}\n")
     except Exception:
         raise HTTPException(status_code=502, detail="Could not send the e-mail — check SMTP settings")
-    return {"detail": "Confirmation e-mail sent"}
+    return {"detail": "Confirmation e-mail sent — check your inbox AND the Spam folder"}
 
 
 # Short-lived OAuth state store (in-memory; single-process deployment).
