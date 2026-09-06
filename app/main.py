@@ -71,6 +71,20 @@ def _run_migrations() -> None:
             job_existing = {col["name"] for col in inspector.get_columns("batch_jobs")}
             if "account_id" not in job_existing:
                 conn.execute(text("ALTER TABLE batch_jobs ADD COLUMN account_id VARCHAR(64)"))
+        if inspector.has_table("accounts"):
+            acc_existing = {col["name"] for col in inspector.get_columns("accounts")}
+            if "email" not in acc_existing:
+                conn.execute(text("ALTER TABLE accounts ADD COLUMN email VARCHAR(255)"))
+            if "email_confirmed" not in acc_existing:
+                conn.execute(
+                    text("ALTER TABLE accounts ADD COLUMN email_confirmed BOOLEAN DEFAULT 0")
+                )
+            if "confirm_token" not in acc_existing:
+                conn.execute(text("ALTER TABLE accounts ADD COLUMN confirm_token VARCHAR(64)"))
+            if "confirm_token_expires" not in acc_existing:
+                conn.execute(
+                    text("ALTER TABLE accounts ADD COLUMN confirm_token_expires DATETIME")
+                )
 
 
 Base.metadata.create_all(bind=engine)

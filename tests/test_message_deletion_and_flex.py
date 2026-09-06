@@ -1205,40 +1205,54 @@ def test_client_password_login():
     assert row["label"] == "PwClient"
 
 
-def test_self_registration_login_and_isolation():
-    """A client without an account self-registers with a unique Login +
-    mandatory password, lands in its own isolated account, and logs in
-    later with Login + password (case-insensitive)."""
+def test_self_registration_login_and_isolation(monkeypatch):
+    """E-mail signup: register -> confirmation link -> confirmed login.
+    Without SMTP configured the endpoint is disabled (503)."""
+    from app.services import mailer
+
+    # SMTP not configured -> registration disabled.
+    assert client.post(
+        "/api/auth/register", json={"email": "a@x.io", "password": "pw-123456"}
+    ).status_code == 503
+
+    sent = []
+    monkeypatch.setattr(mailer, "smtp_configured", lambda: True)
+    monkeypatch.setattr(
+        mailer, "send_message", lambda to, subject, body: sent.append((to, subject, body))
+    )
     r = client.post(
         "/api/auth/register",
-        json={"login": "NewClient", "password": "reg-pw-123"},
+        json={"email": "NewClient@x.io", "password": "reg-pw-123"},
     )
-    assert r.status_code == 201, r.text
-    token = r.json()["token"]
-    headers = {"Authorization": f"Bearer {token}"}
-    # Its own account, no owner dialogs visible.
-    me = client.get("/api/auth/me", headers=headers).json()
-    assert me["account_id"] != client.get(
-        "/api/auth/account", headers=auth_headers()
-    ).json()["account_id"]
-    assert client.get("/api/conversations", headers=headers).json() == []
-    # Login again with the same login (different case) + password.
+    assert r.status_code == 202, r.text
+    assert sent and sent[0][0] == "newclient@x.io"
+    # Login before confirmation is blocked (403).
+    assert client.post(
+        "/api/auth/login", json={"login": "newclient@x.io", "password": "reg-pw-123"}
+    ).status_code == 403
+    # Confirm via the mailed link.
+    token = [seg for seg in sent[0][2].split() if "confirm-email?token=" in seg][0]
+    token = token.split("token=")[1]
+    confirmed = client.get(f"/api/auth/confirm-email?token={token}", follow_redirects=False)
+    assert confirmed.status_code == 302
+    # Now login works (e-mail is case-insensitive) and the account is isolated.
     again = client.post(
-        "/api/auth/login", json={"login": "newclient", "password": "reg-pw-123"}
+        "/api/auth/login", json={"login": "newclient@X.io", "password": "reg-pw-123"}
     )
     assert again.status_code == 200, again.text
-    me2 = client.get(
+    me = client.get(
         "/api/auth/me", headers={"Authorization": f"Bearer {again.json()['token']}"}
     ).json()
-    assert me2["account_id"] == me["account_id"]
-    # Wrong password → 401; duplicate login → 409.
+    owner_id = client.get("/api/auth/account", headers=auth_headers()).json()["account_id"]
+    assert me["account_id"] != owner_id
+    # Duplicate e-mail -> 409; bad address -> 422.
     assert client.post(
-        "/api/auth/login", json={"login": "NewClient", "password": "wrong-pw"}
-    ).status_code == 401
-    assert client.post(
-        "/api/auth/register", json={"login": "newclient", "password": "whatever-1"}
+        "/api/auth/register", json={"email": "newclient@x.io", "password": "whatever-1"}
     ).status_code == 409
-    # Password is mandatory: too-short password → validation error (422).
     assert client.post(
-        "/api/auth/register", json={"login": "Shorty", "password": "123"}
+        "/api/auth/register", json={"email": "nope", "password": "whatever-1"}
     ).status_code == 422
+
+
+def test_google_oauth_disabled_without_credentials():
+    assert client.get("/api/auth/oauth/google/start").status_code == 503

@@ -75,17 +75,18 @@ class AccountResponse(BaseModel):
 
 
 class RegisterRequest(BaseModel):
-    """Self-service client registration: unique login + mandatory password."""
+    """Self-service client registration: unique e-mail + mandatory password.
+    A confirmation link is mailed before the account can log in."""
 
-    login: str = Field(min_length=2, max_length=64)
+    email: str = Field(min_length=5, max_length=255)
     password: str = Field(min_length=6, max_length=128)
 
 
 class LoginRequest(BaseModel):
     password: str
-    # The login (account label, case-insensitive) or a raw account id
-    # (bc-…). Optional for backward compatibility: empty means the owner
-    # account, which authenticates with the master password.
+    # The login: the registered e-mail address, the account label, or a raw
+    # account id (bc-…). Optional for backward compatibility: empty means
+    # the owner account (master password).
     login: str | None = None
     account_id: str | None = None
 

@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 from typing import Optional
 
-from sqlalchemy import DateTime, ForeignKey, String, Text
+from sqlalchemy import Boolean, DateTime, ForeignKey, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -34,6 +34,14 @@ class Account(Base):
     # Optional per-account password (pbkdf2 hash). When unset, the account
     # logs in with the instance master password (settings.app_password).
     password_hash: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    # E-mail registration: unique address, confirmed via a mailed link (or
+    # automatically for Google sign-ins). Empty = account created by the
+    # owner/pairing, no e-mail login.
+    email: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
+    email_confirmed: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Pending e-mail confirmation token (one active link at a time).
+    confirm_token: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    confirm_token_expires: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 

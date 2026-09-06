@@ -1,12 +1,20 @@
+import base64
+import json
+import re
 import secrets
+import time
+from datetime import timedelta
+from urllib.parse import urlencode
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import RedirectResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.database import get_db
-from app.models import Account, AuthToken
+from app.models import Account, AuthToken, utcnow
 from app.rate_limit import (
     check_login_allowed,
     record_login_failure,
@@ -28,6 +36,7 @@ from app.security import (
     get_current_token,
     verify_password,
 )
+from app.services import mailer
 from app.services.account import (
     account_view,
     create_account as create_client_account,
@@ -38,6 +47,8 @@ from app.services.account import (
 from app.services.providers import configured_status
 
 router = APIRouter(prefix="/api", tags=["auth"])
+
+_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 
 @router.get("/health", response_model=HealthResponse)
@@ -58,6 +69,10 @@ def _resolve_login_account(db: Session, payload: LoginRequest) -> Account:
 
     wanted = (payload.login or "").strip()
     if wanted:
+        # 1) by registered e-mail (exact, case-insensitive)
+        by_email = db.scalar(select(Account).where(Account.email == wanted.lower()))
+        if by_email is not None:
+            return by_email
         rows = db.scalars(select(Account)).all()
         for account in rows:
             if (account.label or "").strip().lower() == wanted.lower():
@@ -79,6 +94,13 @@ def login(payload: LoginRequest, request: Request, db: Session = Depends(get_db)
     # Brute-force protection: fail-2-lockout per client IP.
     check_login_allowed(request)
     account = _resolve_login_account(db, payload)
+    # E-mail-registered accounts must confirm their address before login
+    # (Google sign-ins are auto-confirmed, so they never hit this).
+    if account.email and not account.email_confirmed:
+        raise HTTPException(
+            status_code=403,
+            detail="Confirm your e-mail first — check your inbox for the link",
+        )
     if not verify_password(payload.password, account):
         record_login_failure(request)
         raise HTTPException(status_code=401, detail="Wrong password")
@@ -135,32 +157,169 @@ def rotate_account(
     return AccountResponse(**account_view(acct, server_url=base))
 
 
-@router.post("/auth/register", response_model=LoginResponse, status_code=201)
-def register(payload: RegisterRequest, request: Request, db: Session = Depends(get_db)) -> LoginResponse:
-    """Self-service registration: a client without an account creates one
-    with a unique Login + password (mandatory), and is logged in right away.
-
-    The new account is fully isolated: it sees only its own dialogs and
-    never the owner's data or provider credentials. Brute-force protected.
-    """
+@router.post("/auth/register", status_code=202)
+def register(payload: RegisterRequest, request: Request, db: Session = Depends(get_db)) -> dict:
+    """Self-service registration via e-mail: a client signs up with a unique
+    e-mail + password and receives a confirmation link by mail; login works
+    only after confirming. Disabled until SMTP is configured on the server."""
+    if not mailer.smtp_configured():
+        raise HTTPException(
+            status_code=503,
+            detail="E-mail registration is not configured on this server — use a pairing code",
+        )
     check_login_allowed(request)
-    login_name = payload.login.strip()
+    email_addr = payload.email.strip().lower()
+    if not _EMAIL_RE.match(email_addr):
+        raise HTTPException(status_code=422, detail="Enter a valid e-mail address")
+    if db.scalar(select(Account).where(Account.email == email_addr)) is not None:
+        record_login_failure(request)
+        raise HTTPException(status_code=409, detail="This e-mail is already registered")
     from app.services.account import hash_password
 
-    rows = db.scalars(select(Account)).all()
-    for account in rows:
-        if (account.label or "").strip().lower() == login_name.lower():
-            record_login_failure(request)
-            raise HTTPException(
-                status_code=409,
-                detail=f"Login '{login_name}' is already taken — choose another",
-            )
-    account = create_client_account(db, label=login_name)
+    label = email_addr.split("@", 1)[0][:64]
+    rows = db.scalars(select(Account.label)).all()
+    if any((r or "").strip().lower() == label.lower() for r in rows):
+        label = email_addr[:64]  # fall back to the full address for uniqueness
+    account = create_client_account(db, label=label)
+    account.email = email_addr
+    account.email_confirmed = False
     account.password_hash = hash_password(payload.password)
+    account.confirm_token = secrets.token_urlsafe(24)
+    account.confirm_token_expires = utcnow() + timedelta(hours=24)
     db.commit()
+    base = settings.public_base_url.rstrip("/") or str(request.base_url).rstrip("/")
+    link = f"{base}/api/auth/confirm-email?token={account.confirm_token}"
+    try:
+        mailer.send_message(
+            email_addr,
+            "Batch Chat — confirm your e-mail",
+            "Welcome to Batch Chat!\n\nConfirm your e-mail by opening this link "
+            f"(valid for 24 hours):\n\n{link}\n\n"
+            "After confirming you can log in with this address and your password.",
+        )
+    except Exception:
+        db.delete(account)
+        db.commit()
+        record_login_failure(request)
+        raise HTTPException(
+            status_code=502,
+            detail="Could not send the confirmation e-mail — check SMTP settings",
+        )
     record_login_success(request)
+    return {"detail": "Confirmation e-mail sent — check your inbox (and spam)"}
+
+
+@router.get("/auth/confirm-email")
+def confirm_email(token: str, db: Session = Depends(get_db)):  # -> RedirectResponse
+    """Confirmation link target: marks the account's e-mail as confirmed."""
+    account = db.scalar(select(Account).where(Account.confirm_token == token.strip()))
+    if account is None or not account.confirm_token_expires or account.confirm_token_expires < utcnow():
+        raise HTTPException(status_code=400, detail="Invalid or expired confirmation link")
+    account.email_confirmed = True
+    account.confirm_token = None
+    account.confirm_token_expires = None
+    db.commit()
+    base = settings.public_base_url.rstrip("/")
+    return RedirectResponse(url=f"{base}/#confirmed=1", status_code=302)
+
+
+@router.post("/auth/resend-confirmation", status_code=202)
+def resend_confirmation(payload: RegisterRequest, request: Request, db: Session = Depends(get_db)) -> dict:
+    """Re-send the confirmation mail for an existing, not-yet-confirmed address."""
+    if not mailer.smtp_configured():
+        raise HTTPException(status_code=503, detail="E-mail sending is not configured")
+    check_login_allowed(request)
+    email_addr = payload.email.strip().lower()
+    account = db.scalar(select(Account).where(Account.email == email_addr))
+    if account is None or account.email_confirmed:
+        # Do not reveal whether the address exists.
+        return {"detail": "If the address needs confirmation, a new mail was sent"}
+    account.confirm_token = secrets.token_urlsafe(24)
+    account.confirm_token_expires = utcnow() + timedelta(hours=24)
+    db.commit()
+    base = settings.public_base_url.rstrip("/") or str(request.base_url).rstrip("/")
+    link = f"{base}/api/auth/confirm-email?token={account.confirm_token}"
+    try:
+        mailer.send_message(email_addr, "Batch Chat — confirm your e-mail",
+                            f"Confirm your e-mail (valid 24 h):\n\n{link}\n")
+    except Exception:
+        raise HTTPException(status_code=502, detail="Could not send the e-mail — check SMTP settings")
+    return {"detail": "Confirmation e-mail sent"}
+
+
+# Short-lived OAuth state store (in-memory; single-process deployment).
+_OAUTH_STATES: dict[str, dict] = {}
+
+
+@router.get("/auth/oauth/google/start")
+def google_start(request: Request, client: str = "web"):
+    """Kick off the Google sign-in flow. `client=phone` redirects back to the
+    app's custom scheme (batchchat://), web returns to the web UI."""
+    if not settings.google_oauth_client_id or not settings.google_oauth_client_secret:
+        raise HTTPException(status_code=503, detail="Google sign-in is not configured on this server")
+    base = settings.public_base_url.rstrip("/") or str(request.base_url).rstrip("/")
+    state = secrets.token_urlsafe(16)
+    _OAUTH_STATES[state] = {"client": client, "ts": time.time()}
+    params = urlencode({
+        "client_id": settings.google_oauth_client_id,
+        "redirect_uri": f"{base}/api/auth/oauth/google/callback",
+        "response_type": "code",
+        "scope": "openid email",
+        "state": state,
+        "prompt": "select_account",
+    })
+    return RedirectResponse(url=f"https://accounts.google.com/o/oauth2/v2/auth?{params}", status_code=302)
+
+
+@router.get("/auth/oauth/google/callback")
+def google_callback(request: Request, code: str = "", state: str = "", db: Session = Depends(get_db)):
+    """Exchange the OAuth code, find or create the account by e-mail
+    (Google-verified addresses are auto-confirmed), hand the session token
+    to the requesting client (web fragment or batchchat:// deep link)."""
+    info = _OAUTH_STATES.pop(state, None)
+    if not info or time.time() - info["ts"] > 600:
+        raise HTTPException(status_code=400, detail="Unknown or expired OAuth state")
+    base = settings.public_base_url.rstrip("/") or str(request.base.url).rstrip("/")
+    resp = httpx.post(
+        "https://oauth2.googleapis.com/token",
+        data={
+            "code": code,
+            "client_id": settings.google_oauth_client_id,
+            "client_secret": settings.google_oauth_client_secret,
+            "redirect_uri": f"{base}/api/auth/oauth/google/callback",
+            "grant_type": "authorization_code",
+        },
+        timeout=20,
+    )
+    if resp.status_code != 200:
+        raise HTTPException(status_code=502, detail="Google token exchange failed")
+    id_token = resp.json().get("id_token", "")
+    try:
+        payload_b64 = id_token.split(".")[1]
+        payload_b64 += "=" * (-len(payload_b64) % 4)
+        claims = json.loads(base64.urlsafe_b64decode(payload_b64))
+    except Exception:
+        raise HTTPException(status_code=502, detail="Malformed Google response")
+    email_addr = (claims.get("email") or "").lower()
+    if not email_addr or not claims.get("email_verified", False):
+        raise HTTPException(status_code=401, detail="Google account has no verified e-mail")
+    account = db.scalar(select(Account).where(Account.email == email_addr))
+    if account is None:
+        label = email_addr.split("@", 1)[0][:64]
+        rows = db.scalars(select(Account.label)).all()
+        if any((r or "").strip().lower() == label.lower() for r in rows):
+            label = email_addr[:64]
+        account = create_client_account(db, label=label)
+        account.email = email_addr
+    account.email_confirmed = True
+    account.confirm_token = None
+    account.confirm_token_expires = None
+    db.commit()
     token = create_token(db, account.id)
-    return LoginResponse(token=token.token, expires_at=token.expires_at)
+    if info["client"] == "phone":
+        return RedirectResponse(url=f"batchchat://oauth#token={token.token}", status_code=302)
+    return RedirectResponse(url=f"/#token={token.token}", status_code=302)
+
 
 
 @router.post("/auth/accounts", response_model=AccountResponse, status_code=201)

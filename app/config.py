@@ -50,6 +50,26 @@ class Settings(BaseSettings):
     # "https://chat.example.com") when the server sits behind a real domain.
     cors_origins: str = "*"
 
+    # Public base URL of this instance (used in confirmation links and OAuth
+    # redirects). Falls back to the request host when empty.
+    public_base_url: str = ""
+
+    # SMTP for signup confirmation e-mails. Without SMTP configured the
+    # e-mail registration endpoint is disabled (pairing codes still work).
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_user: str = ""
+    smtp_password: str = ""
+    smtp_from: str = ""
+    smtp_tls: bool = True
+
+    # Google OAuth (Sign in with Google). Create credentials at
+    # https://console.cloud.google.com/apis/credentials (type "Web
+    # application") and add "{public_base_url}/api/auth/google/callback" as
+    # an authorized redirect URI. Empty = Google button disabled.
+    google_oauth_client_id: str = ""
+    google_oauth_client_secret: str = ""
+
 
 @lru_cache
 def get_settings() -> Settings:

@@ -29,10 +29,12 @@ const els = {
   loginForm: $("#login-form"),
   loginPassword: $("#login-password"),
   loginAccount: $("#login-account"),
+  loginGoogle: $("#login-google"),
   loginRegisterToggle: $("#login-register-toggle"),
   registerForm: $("#register-form"),
-  registerLogin: $("#register-login"),
+  registerEmail: $("#register-email"),
   registerPassword: $("#register-password"),
+  registerGoogle: $("#register-google"),
   registerBack: $("#register-back"),
   registerError: $("#register-error"),
   loginError: $("#login-error"),
@@ -161,7 +163,7 @@ els.loginForm.addEventListener("submit", async (e) => {
   }
 });
 
-// Client self-registration (Login + mandatory password).
+// Client self-registration (e-mail + mandatory password, confirmation mail).
 els.registerBack.addEventListener("click", () => {
   els.registerForm.classList.add("hidden");
   els.loginForm.classList.remove("hidden");
@@ -172,6 +174,9 @@ els.loginRegisterToggle.addEventListener("click", () => {
   els.registerForm.classList.remove("hidden");
   els.loginError.classList.add("hidden");
 });
+const startGoogleOAuth = () => { location.href = "/api/auth/oauth/google/start?client=web"; };
+els.loginGoogle.addEventListener("click", startGoogleOAuth);
+els.registerGoogle.addEventListener("click", startGoogleOAuth);
 els.registerForm.addEventListener("submit", async (e) => {
   e.preventDefault();
   els.registerError.classList.add("hidden");
@@ -179,13 +184,15 @@ els.registerForm.addEventListener("submit", async (e) => {
     const data = await api("/api/auth/register", {
       method: "POST",
       body: JSON.stringify({
-        login: els.registerLogin.value.trim(),
+        email: els.registerEmail.value.trim(),
         password: els.registerPassword.value,
       }),
     });
-    state.token = data.token;
-    localStorage.setItem("bc_token", data.token);
-    showApp();
+    els.registerForm.classList.add("hidden");
+    els.loginForm.classList.remove("hidden");
+    els.loginAccount.value = els.registerEmail.value.trim();
+    els.loginError.textContent = data.detail || "Confirmation e-mail sent — check your inbox";
+    els.loginError.classList.remove("hidden");
   } catch (err) {
     els.registerError.textContent = err.message;
     els.registerError.classList.remove("hidden");
@@ -207,6 +214,24 @@ els.logoutBtn.addEventListener("click", () => {
 // ---------------------------------------------------------------
 // App boot
 // ---------------------------------------------------------------
+// OAuth (Google) returns to "/#token=…" — adopt the session token;
+  // confirm-email returns to "/#confirmed=1" — show a hint.
+(function consumeUrlFragment() {
+  const hash = location.hash.replace(/^#/, "");
+  if (!hash) return;
+  const params = new URLSearchParams(hash);
+  const oauthToken = params.get("token");
+  if (oauthToken) {
+    localStorage.setItem("bc_token", oauthToken);
+    location.hash = "";
+    location.reload();
+    return;
+  }
+  if (params.get("confirmed")) {
+    setTimeout(() => alert("E-mail confirmed — you can log in now with your e-mail and password."), 50);
+  }
+})();
+
 function showApp() {
   els.loginView.classList.add("hidden");
   els.appView.classList.remove("hidden");

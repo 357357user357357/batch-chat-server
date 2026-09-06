@@ -18,17 +18,19 @@
       <h1>Batch Chat</h1>
       <p class="login-sub">Log in to your chat server</p>
       <input id="login-password" type="password" placeholder="Password" autocomplete="current-password" required />
-      <input id="login-account" type="text" placeholder="Login (leave empty for owner)" autocomplete="username" spellcheck="false" />
+      <input id="login-account" type="text" placeholder="E-mail or login (leave empty for owner)" autocomplete="username" spellcheck="false" />
       <button type="submit" class="btn btn-primary">Log in</button>
-      <button type="button" id="login-register-toggle" class="btn btn-ghost btn-small">No account? Create one</button>
+      <button type="button" id="login-google" class="btn btn-ghost btn-small">Sign in with Google</button>
+      <button type="button" id="login-register-toggle" class="btn btn-ghost btn-small">No account? Sign up with e-mail</button>
       <p id="login-error" class="error-text hidden"></p>
     </form>
     <form id="register-form" class="login-card hidden">
       <h1>Batch Chat</h1>
-      <p class="login-sub">Create a client account — Login must be unique, password is mandatory</p>
-      <input id="register-login" type="text" placeholder="Login (unique, e.g. Alice)" autocomplete="username" required minlength="2" spellcheck="false" />
+      <p class="login-sub">Create a client account — you'll receive a confirmation e-mail; password is mandatory</p>
+      <input id="register-email" type="email" placeholder="E-mail (unique)" autocomplete="email" required spellcheck="false" />
       <input id="register-password" type="password" placeholder="Password (min 6 chars)" autocomplete="new-password" required minlength="6" />
-      <button type="submit" class="btn btn-primary">Create account &amp; log in</button>
+      <button type="submit" class="btn btn-primary">Sign up</button>
+      <button type="button" id="register-google" class="btn btn-ghost btn-small">Sign up with Google</button>
       <button type="button" id="register-back" class="btn btn-ghost btn-small">← Back to login</button>
       <p id="register-error" class="error-text hidden"></p>
     </form>
