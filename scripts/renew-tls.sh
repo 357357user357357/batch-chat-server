@@ -1,27 +1,48 @@
 #!/bin/sh
-# Renew the Let's Encrypt certificate for the server IP (short-lived profile,
-# ~6-day lifetime) and reload the container when it actually renewed.
-# The IP is NOT hardcoded: it comes from $SERVER_IP (environment) or the
-# SERVER_IP=... line in the repo's .env file.
+# Renew the Let's Encrypt certificate (short-lived profile, ~6-day lifetime)
+# for the configured domain(s) and/or the server IP, then reload the container
+# when it actually renewed.
+# Nothing is hardcoded: SERVER_IP and TLS_DOMAINS come from the environment
+# or the SERVER_IP=... / TLS_DOMAINS=... lines in the repo's .env file.
 cd "$(dirname "$0")/.." || exit 1
 if [ -z "${SERVER_IP:-}" ] && [ -f .env ]; then
-  SERVER_IP=$(grep -E '^SERVER_IP=' .env | head -1 | cut -d= -f2 | tr -d '"'"'"'')
+  SERVER_IP=$(grep -E '^SERVER_IP=' .env | head -1 | cut -d= -f2 | tr -d '"')
 fi
-if [ -z "${SERVER_IP:-}" ]; then
-  echo "SERVER_IP is not set (define it in .env or the environment)" >&2
+if [ -z "${TLS_DOMAINS:-}" ] && [ -f .env ]; then
+  TLS_DOMAINS=$(grep -E '^TLS_DOMAINS=' .env | head -1 | cut -d= -f2 | tr -d '"')
+fi
+if [ -z "${SERVER_IP:-}" ] && [ -z "${TLS_DOMAINS:-}" ]; then
+  echo "Neither SERVER_IP nor TLS_DOMAINS is set (define them in .env or the environment)" >&2
   exit 1
 fi
 
-# lego v5: `run` both issues and renews (renew when <4 days remain, or via ARI)
-/usr/local/bin/lego run --accept-tos --domains "$SERVER_IP" --http --profile shortlived --pem --renew-days 4 2>&1
+# The primary name decides the certificate file names lego creates.
+PRIMARY=$(echo ${TLS_DOMAINS:-} | awk '{print $1}')
+[ -n "$PRIMARY" ] || PRIMARY="$SERVER_IP"
+CRT=".lego/certificates/$PRIMARY.crt"
 
-# Publish the current cert/key under stable names (docker-compose mounts these),
-# right after a renewal — or on the very first run when they don't exist yet.
-if [ ! -f .lego/certificates/current.crt ] || \
-   find .lego/certificates -name "$SERVER_IP.crt" -mmin -3 | grep -q .; then
-  cat ".lego/certificates/$SERVER_IP.crt" ".lego/certificates/$SERVER_IP.issuer.crt" \
+# Renew only when the current cert expires within 5 days (cron runs every 8h).
+if [ -f "$CRT" ]; then
+  END=$(openssl x509 -in "$CRT" -noout -enddate | cut -d= -f2)
+  LEFT=$(( $(date -d "$END" +%s) - $(date +%s) ))
+  if [ "$LEFT" -gt $((5 * 24 * 3600)) ]; then
+    echo "Skip renewal: expires $END, renewal possible in $((LEFT / 3600))h"
+    exit 0
+  fi
+fi
+
+# lego v5: `run` issues and re-issues the certificate (overwrites in place).
+ARGS=""
+for d in $TLS_DOMAINS $SERVER_IP; do
+  [ -n "$d" ] && ARGS="$ARGS --domains $d"
+done
+/usr/local/bin/lego run --accept-tos $ARGS --http --profile shortlived --pem 2>&1
+
+# Publish the current cert/key under stable names (docker-compose mounts these).
+if [ -f ".lego/certificates/$PRIMARY.crt" ]; then
+  cat ".lego/certificates/$PRIMARY.crt" ".lego/certificates/$PRIMARY.issuer.crt" \
       > .lego/certificates/current.crt
-  cp ".lego/certificates/$SERVER_IP.key" .lego/certificates/current.key
+  cp ".lego/certificates/$PRIMARY.key" .lego/certificates/current.key
   docker compose restart batch-chat
 fi
 

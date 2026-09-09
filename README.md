@@ -227,19 +227,23 @@ curl -X POST http://localhost:8000/api/chat/send \
 ## Security notes
 
 - Change `APP_PASSWORD` to something strong.
-- **HTTPS (TLS) is enabled out of the box**: run `./scripts/gen-certs.sh <server-ip>`
-  once — it creates a private CA + server certificate in `./certs/` and the app
-  is then served over **https://<server-ip>:8443** (the password, keys and
-  dialogs are encrypted in transit; uvicorn terminates TLS natively).
-  The browser shows a one-time warning for the self-signed certificate —
-  accept it (normal for IP-only servers without a domain).
-- **The Android app pins the CA** (`res/raw/batch_chat_ca.pem` + network
-  security config): a man-in-the-middle with any other certificate is refused
-  by Android itself. Copy the new `ca.crt` into the app and rebuild after
-  regenerating certs.
+- **HTTPS (TLS) is enabled out of the box**: set `SERVER_IP` and `TLS_DOMAINS`
+  in `.env`, then run `./scripts/renew-tls.sh` once — Let's Encrypt issues ONE
+  certificate covering the domain(s) **and** the server IP (short-lived profile,
+  auto-renewed by cron every 8h via the same script). The app is served over
+  **https://<your-domain>** and **https://<server-ip>** (the password, keys and
+  dialogs are encrypted in transit; uvicorn terminates TLS natively) — the
+  certificate is publicly trusted, so browsers show the padlock with no warnings.
+- **Google OAuth sign-in**: set `GOOGLE_OAUTH_CLIENT_ID` / `GOOGLE_OAUTH_CLIENT_SECRET`
+  in `.env` and register the redirect URI
+  `https://<your-domain>/api/auth/oauth/google/callback` in Google Cloud Console.
+
+- **The certificate is publicly trusted** (Let's Encrypt), so the phone's
+  security config trusts system CAs — no pinning file needed; pair the app with
+  `https://<your-domain>`.
 - Port `:8000` (plain HTTP) is kept only for migration; once all devices use
-  `:8443`, remove the `"8000:8000"` mapping in `docker-compose.yml` and open
-  only 8443 in the VPS firewall.
+  HTTPS, remove the `"8000:8000"` mapping in `docker-compose.yml` and open
+  only 443 (keep 80 for certificate renewals) in the VPS firewall.
 - The login endpoint has brute-force protection: after 5 failed attempts the
   client IP is locked out (30s, doubling up to 15 minutes).
 - The API key never leaves the server.
