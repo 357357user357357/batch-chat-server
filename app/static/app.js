@@ -104,13 +104,9 @@ const els = {
   accountReveal: $("#account-reveal"),
   accountCopy: $("#account-copy"),
   accountRotate: $("#account-rotate"),
-  accountLabel: $("#account-label"),
-  accountClientPassword: $("#account-client-password"),
-  accountAdminPassword: $("#account-admin-password"),
-  accountCreate: $("#account-create"),
-  accountList: $("#account-list"),
   accountDanger: $("#account-danger"),
   accountDelete: $("#account-delete"),
+  accountDangerNote: $("#account-danger-note"),
   accountCode: $("#account-code"),
   settingsBackupDownload: $("#settings-backup-download"),
   settingsBackupRestoreBtn: $("#settings-backup-restore-btn"),
@@ -126,7 +122,7 @@ async function api(path, options = {}) {
   if (options.body && !headers["Content-Type"]) headers["Content-Type"] = "application/json";
 
   const resp = await fetch(path, { ...options, headers });
-  if (resp.status === 401) {
+  if (resp.status === 401 && !options.noLogout) {
     logout();
     throw new Error("Session expired. Please log in again.");
   }
@@ -154,6 +150,7 @@ els.loginForm.addEventListener("submit", async (e) => {
     if (loginName) body.login = loginName;
     const data = await api("/api/auth/login", {
       method: "POST",
+      noLogout: true,
       body: JSON.stringify(body),
     });
     state.token = data.token;
@@ -185,6 +182,7 @@ els.registerForm.addEventListener("submit", async (e) => {
   try {
     const data = await api("/api/auth/register", {
       method: "POST",
+      noLogout: true,
       body: JSON.stringify({
         email: els.registerEmail.value.trim(),
         password: els.registerPassword.value,
@@ -1412,28 +1410,18 @@ async function loadAccount() {
     els.accountStatus.classList.add("err");
     els.accountStatus.textContent = `Account load failed: ${err.message}`;
   }
-  // Account list (ids + labels only, no secrets).
-  try {
-    const rows = await api("/api/auth/accounts");
-    if (rows.length > 0) {
-      els.accountList.textContent =
-        "Accounts: " +
-        rows
-          .map((a) => {
-            const label = a.label ? ` (${a.label}${a.has_password ? " 🔑" : ""})` : a.has_password ? " (🔑)" : "";
-            return `${a.account_id}${label}`;
-          })
-          .join(", ");
-    } else {
-      els.accountList.textContent = "";
-    }
-  } catch {
-    els.accountList.textContent = "";
-  }
-  // Danger zone: clients may self-delete; the owner account cannot.
+  // Danger zone: visible for everyone, but disabled for the owner (whose
+  // account carries the provider keys and cannot be deleted).
   try {
     const me = await api("/api/auth/me");
-    els.accountDanger.classList.toggle("hidden", !!me.is_owner);
+    if (me.is_owner) {
+      els.accountDelete.disabled = true;
+      els.accountDangerNote.textContent =
+        "The owner account cannot be deleted — it manages this server.";
+    } else {
+      els.accountDelete.disabled = false;
+      els.accountDangerNote.textContent = "";
+    }
   } catch {
     els.accountDanger.classList.add("hidden");
   }
@@ -1445,8 +1433,8 @@ els.accountDelete.addEventListener("click", async () => {
   );
   if (!really) return;
   els.accountDelete.disabled = true;
-  els.accountList.className = "import-status";
-  els.accountList.textContent = "Deleting account…";
+  els.accountDangerNote.className = "import-status";
+  els.accountDangerNote.textContent = "Deleting account…";
   try {
     const res = await api("/api/auth/account", { method: "DELETE" });
     alert(
@@ -1455,50 +1443,9 @@ els.accountDelete.addEventListener("click", async () => {
     localStorage.removeItem("bc_token");
     location.reload();
   } catch (err) {
-    els.accountList.className = "import-status err";
-    els.accountList.textContent = `Delete failed: ${err.message}`;
+    els.accountDangerNote.className = "import-status err";
+    els.accountDangerNote.textContent = `Delete failed: ${err.message}`;
     els.accountDelete.disabled = false;
-  }
-});
-
-els.accountCreate.addEventListener("click", async () => {
-  const adminPassword = els.accountAdminPassword.value;
-  const clientPassword = els.accountClientPassword.value;
-  if (!adminPassword) {
-    els.accountList.className = "import-status err";
-    els.accountList.textContent = "Enter the master password to create a client account.";
-    return;
-  }
-  if (clientPassword.length < 6) {
-    els.accountList.className = "import-status err";
-    els.accountList.textContent = "Client password is required (min 6 chars).";
-    return;
-  }
-  els.accountCreate.disabled = true;
-  els.accountList.className = "import-status";
-  els.accountList.textContent = "Creating…";
-  try {
-    const data = await api("/api/auth/accounts", {
-      method: "POST",
-      body: JSON.stringify({
-        admin_password: adminPassword,
-        label: els.accountLabel.value.trim() || null,
-        client_password: els.accountClientPassword.value || null,
-      }),
-    });
-    els.accountAdminPassword.value = "";
-    els.accountLabel.value = "";
-    els.accountClientPassword.value = "";
-    els.accountList.className = "import-status ok";
-    els.accountList.textContent = `Created ${data.account_id} — its pairing code is shown below; copy it now.`;
-    els.accountCode.textContent = data.pair_code;
-    els.accountCode.classList.remove("hidden");
-    await loadAccount();
-  } catch (err) {
-    els.accountList.className = "import-status err";
-    els.accountList.textContent = `Create failed: ${err.message}`;
-  } finally {
-    els.accountCreate.disabled = false;
   }
 });
 

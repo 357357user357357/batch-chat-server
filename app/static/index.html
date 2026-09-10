@@ -269,23 +269,15 @@
 
       <hr class="modal-divider" />
       <p class="modal-hint">
-        <strong>Client accounts.</strong> Create an isolated account for another
-        person/device: it gets its own pairing code and sees <em>only its
-        own</em> dialogs — never yours and never the provider keys above.
-        Logins must be <em>unique</em> and every client gets a mandatory
-        password — they log in with <em>Login + password</em> (the master
-        password never opens their account). Creating one requires the
-        master password.
+        <strong>Account &amp; data.</strong> You can delete your account here —
+        all your dialogs, messages and batches are permanently removed and your
+        e-mail/login is freed, so you can register again from zero. (The owner
+        account of this server cannot be deleted.)
       </p>
-      <div class="account-create-row">
-        <input id="account-label" type="text" placeholder="Login (unique, e.g. Alice)" autocomplete="off" spellcheck="false" />
-        <input id="account-client-password" type="password" placeholder="Client password (required)" autocomplete="new-password" />
-        <input id="account-admin-password" type="password" placeholder="Master password" autocomplete="off" />
-        <button id="account-create" class="btn btn-ghost btn-small">➕ Create client</button>
-      </div>
-      <p id="account-list" class="import-status"></p>
-      <div id="account-danger" class="account-create-row hidden">
+
+      <div id="account-danger" class="account-create-row">
         <button id="account-delete" class="btn btn-ghost btn-small">🗑 Delete my account…</button>
+        <p id="account-danger-note" class="import-status"></p>
       </div>
 
       <hr class="modal-divider" />
