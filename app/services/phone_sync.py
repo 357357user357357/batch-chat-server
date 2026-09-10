@@ -1,5 +1,6 @@
 """Shared helpers for converting Android-app AsyncStorage payloads
-(PhoneDialog / PhoneBatch) into (role, content, model) message tuples.
+(PhoneDialog / PhoneBatch) into message dicts (role/content/model plus the
+optional OpenRouter metadata: reasoning, provider, gen_id, usage, cost).
 
 Used by both the one-shot "paste an export" import endpoint and the
 multi-device sync endpoints, so the two stay consistent.
@@ -7,16 +8,35 @@ multi-device sync endpoints, so the two stay consistent.
 
 from app.schemas import PhoneBatch, PhoneDialog
 
+_META_FIELDS = (
+    "reasoning", "provider", "gen_id",
+    "tokens_prompt", "tokens_completion", "total_tokens", "cost",
+)
+
 
 def title_default(item_title: str | None, fallback: str) -> str:
     return (item_title or fallback)[:255]
 
 
-def dialog_messages(dialog: PhoneDialog) -> list[tuple[str, str, str | None]]:
-    return [(m.role, m.content, m.model or dialog.model) for m in dialog.messages]
+def _message_dict(role: str, content: str, model: str | None,
+                  source=None) -> dict:
+    msg = {"role": role, "content": content, "model": model}
+    if source is not None:
+        for field in _META_FIELDS:
+            value = getattr(source, field, None)
+            if value is not None:
+                msg[field] = value
+    return msg
 
 
-def batch_messages(item: PhoneBatch) -> list[tuple[str, str, str | None]]:
+def dialog_messages(dialog: PhoneDialog) -> list[dict]:
+    return [
+        _message_dict(m.role, m.content, m.model or dialog.model, source=m)
+        for m in dialog.messages
+    ]
+
+
+def batch_messages(item: PhoneBatch) -> list[dict]:
     """Flatten a batch item into (prompt, answer) message pairs.
 
     Results are matched to prompts by custom_id ``req-{n}`` (1-based, same as
@@ -46,14 +66,14 @@ def batch_messages(item: PhoneBatch) -> list[tuple[str, str, str | None]]:
                 )
         answers[custom_id] = answer
 
-    messages: list[tuple[str, str, str | None]] = []
+    messages: list[dict] = []
     for index, prompt in enumerate(item.prompts, start=1):
         if not prompt or not prompt.strip():
             continue
-        messages.append(("user", prompt, None))
+        messages.append({"role": "user", "content": prompt, "model": None})
         answer = answers.get(f"req-{index}", "")
         if answer:
-            messages.append(("assistant", answer, item.model))
+            messages.append({"role": "assistant", "content": answer, "model": item.model})
     return messages
 
 

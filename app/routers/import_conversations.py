@@ -130,7 +130,7 @@ def _store_conversation(
     kind: str,
     model: str | None,
     title: str,
-    messages: list[tuple[str, str, str | None]],
+    messages: list[dict],
 ) -> None:
     conv = Conversation(
         external_id=external_id,
@@ -141,12 +141,19 @@ def _store_conversation(
     )
     db.add(conv)
     db.flush()
-    for role, content, msg_model in messages:
+    for msg in messages:
         db.add(
             Message(
                 conversation_id=conv.id,
-                role=role,
-                content=content,
-                model=msg_model,
+                role=msg["role"],
+                content=msg["content"],
+                model=msg.get("model"),
+                reasoning=msg.get("reasoning"),
+                provider=msg.get("provider"),
+                gen_id=msg.get("gen_id"),
+                tokens_prompt=msg.get("tokens_prompt"),
+                tokens_completion=msg.get("tokens_completion"),
+                total_tokens=msg.get("total_tokens"),
+                cost=msg.get("cost"),
             )
         )

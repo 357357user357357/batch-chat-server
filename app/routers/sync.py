@@ -102,6 +102,13 @@ def pull(
                         content=m.content,
                         model=m.model,
                         created_at=_utc(m.created_at),
+                        reasoning=m.reasoning,
+                        provider=m.provider,
+                        gen_id=m.gen_id,
+                        tokens_prompt=m.tokens_prompt,
+                        tokens_completion=m.tokens_completion,
+                        total_tokens=m.total_tokens,
+                        cost=m.cost,
                     )
                     for m in conv.messages
                     if m.deleted_at is None
@@ -198,7 +205,7 @@ def _upsert(
     model: str | None,
     title: str,
     account_id: str,
-    messages: list[tuple[str, str, str | None]],
+    messages: list[dict],
     device: str = "unknown",
 ) -> str:
     """Create or update a conversation by external_id. Returns "created",
@@ -262,22 +269,48 @@ def _upsert(
         kept_counter = Counter(
             (m.role, m.content) for m in conv.messages if m.deleted_at is None
         )
-        for role, content, msg_model in messages:
+        for msg in messages:
+            role, content = msg["role"], msg["content"]
             if (role, content) in tombstones:
                 continue  # deleted from the web — keep it deleted
             if kept_counter.get((role, content), 0) > 0:
                 kept_counter[(role, content)] -= 1
                 continue  # already on the server
-            db.add(Message(conversation_id=conv.id, role=role, content=content, model=msg_model))
+            db.add(Message(
+                conversation_id=conv.id,
+                role=role,
+                content=content,
+                model=msg.get("model"),
+                reasoning=msg.get("reasoning"),
+                provider=msg.get("provider"),
+                gen_id=msg.get("gen_id"),
+                tokens_prompt=msg.get("tokens_prompt"),
+                tokens_completion=msg.get("tokens_completion"),
+                total_tokens=msg.get("total_tokens"),
+                cost=msg.get("cost"),
+            ))
         db.flush()
         return "updated"
 
     # Newly created dialog: add every pushed message (skipping tombstones —
     # a brand-new dialog can't match any, but stay defensive).
-    for role, content, msg_model in messages:
+    for msg in messages:
+        role, content = msg["role"], msg["content"]
         if (role, content) in tombstones:
             continue
-        db.add(Message(conversation_id=conv.id, role=role, content=content, model=msg_model))
+        db.add(Message(
+            conversation_id=conv.id,
+            role=role,
+            content=content,
+            model=msg.get("model"),
+            reasoning=msg.get("reasoning"),
+            provider=msg.get("provider"),
+            gen_id=msg.get("gen_id"),
+            tokens_prompt=msg.get("tokens_prompt"),
+            tokens_completion=msg.get("tokens_completion"),
+            total_tokens=msg.get("total_tokens"),
+            cost=msg.get("cost"),
+        ))
     return "created"
 
 

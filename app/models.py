@@ -124,6 +124,17 @@ class Message(Base):
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     # Which device deleted this Q/A (audit trail on the master server).
     deleted_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # Per-message "as in OpenRouter" metadata for assistant replies: which
+    # reasoning effort was requested, who served the generation, its id (for
+    # the deep link to openrouter.ai/logs) and the exact usage/cost reported
+    # via `usage: {include: true}`.
+    reasoning: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    provider: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    gen_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    tokens_prompt: Mapped[int | None] = mapped_column(nullable=True)
+    tokens_completion: Mapped[int | None] = mapped_column(nullable=True)
+    total_tokens: Mapped[int | None] = mapped_column(nullable=True)
+    cost: Mapped[float | None] = mapped_column(nullable=True)
 
     conversation: Mapped["Conversation"] = relationship(back_populates="messages")
 

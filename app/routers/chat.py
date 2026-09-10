@@ -17,7 +17,11 @@ from app.schemas import (
 )
 from app.security import get_account_id
 from app.services import cache_keeper, tavily
-from app.services.providers import ProviderError, chat_completion, default_models
+from app.services.providers import (
+    ProviderError,
+    chat_completion_full,
+    default_models,
+)
 from app.services import openrouter
 
 router = APIRouter(prefix="/api/chat", tags=["chat"])
@@ -166,14 +170,24 @@ def send_chat(
 
     def _call(model: str) -> ChatResponseItem:
         try:
-            content = chat_completion(
+            info = chat_completion_full(
                 model,
                 messages,
                 temperature=payload.temperature,
                 max_tokens=payload.max_tokens,
                 reasoning_effort=payload.reasoning_effort,
             )
-            return ChatResponseItem(model=model, ok=True, content=content)
+            return ChatResponseItem(
+                model=model, ok=True,
+                content=info.get("content"),
+                reasoning=payload.reasoning_effort,
+                provider=info.get("provider"),
+                gen_id=info.get("gen_id"),
+                tokens_prompt=info.get("tokens_prompt"),
+                tokens_completion=info.get("tokens_completion"),
+                total_tokens=info.get("total_tokens"),
+                cost=info.get("cost"),
+            )
         except ProviderError as exc:
             return ChatResponseItem(model=model, ok=False, error=str(exc))
         except Exception as exc:  # defensive: never crash the whole batch
@@ -194,6 +208,13 @@ def send_chat(
                     role="assistant",
                     content=item.content,
                     model=item.model,
+                    reasoning=item.reasoning,
+                    provider=item.provider,
+                    gen_id=item.gen_id,
+                    tokens_prompt=item.tokens_prompt,
+                    tokens_completion=item.tokens_completion,
+                    total_tokens=item.total_tokens,
+                    cost=item.cost,
                 )
                 db.add(assistant_msg)
                 db.flush()

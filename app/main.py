@@ -57,6 +57,18 @@ def _run_migrations() -> None:
             conn.execute(text("ALTER TABLE messages ADD COLUMN deleted_at DATETIME"))
         if "deleted_by" not in msg_existing:
             conn.execute(text("ALTER TABLE messages ADD COLUMN deleted_by VARCHAR(64)"))
+        # Per-message OpenRouter metadata (reasoning effort, provider, usage).
+        for col_name, col_type in (
+            ("reasoning", "VARCHAR(32)"),
+            ("provider", "VARCHAR(128)"),
+            ("gen_id", "VARCHAR(128)"),
+            ("tokens_prompt", "INTEGER"),
+            ("tokens_completion", "INTEGER"),
+            ("total_tokens", "INTEGER"),
+            ("cost", "FLOAT"),
+        ):
+            if col_name not in msg_existing:
+                conn.execute(text(f"ALTER TABLE messages ADD COLUMN {col_name} {col_type}"))
         if inspector.has_table("message_tombstones"):
             tomb_existing = {col["name"] for col in inspector.get_columns("message_tombstones")}
             if "deleted_by" not in tomb_existing:

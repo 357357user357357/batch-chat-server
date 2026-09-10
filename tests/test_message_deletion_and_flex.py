@@ -197,8 +197,9 @@ def test_chat_send_reports_web_search_used(monkeypatch):
     )
     monkeypatch.setattr(
         chat_router,
-        "chat_completion",
-        lambda model, messages, temperature=None, max_tokens=None: "with context",
+        "chat_completion_full",
+        lambda model, messages, temperature=None, max_tokens=None, reasoning_effort=None:
+            {"content": "with context"},
     )
 
     resp = client.post(
@@ -229,9 +230,9 @@ def test_chat_send_injects_server_datetime(monkeypatch):
 
     def fake_completion(model, messages, temperature=None, max_tokens=None, reasoning_effort=None):
         captured["messages"] = messages
-        return "ok"
+        return {"content": "ok"}
 
-    monkeypatch.setattr(chat_router, "chat_completion", fake_completion)
+    monkeypatch.setattr(chat_router, "chat_completion_full", fake_completion)
 
     resp = client.post(
         "/api/chat/send",
@@ -1330,3 +1331,69 @@ def test_delete_account_frees_email_and_wipes_data(monkeypatch):
 
 def test_google_oauth_disabled_without_credentials():
     assert client.get("/api/auth/oauth/google/start").status_code == 503
+
+
+def test_chat_send_records_reasoning_and_usage(monkeypatch):
+    """Per-message OpenRouter metadata: the reply is persisted with the reasoning
+    effort used, the provider, generation id and exact usage/cost — and all of
+    it comes back in the send response AND in a sync pull (so the phone can
+    show the same info)."""
+    from app.routers import chat as chat_router
+    from app.routers import sync as sync_router
+
+    def fake_full(model, messages, temperature=None, max_tokens=None, reasoning_effort=None):
+        return {
+            "content": "meta-reply",
+            "provider": "Novita",
+            "gen_id": "gen-test-123",
+            "tokens_prompt": 1000,
+            "tokens_completion": 479,
+            "total_tokens": 1479,
+            "cost": 0.0021,
+        }
+
+    monkeypatch.setattr(chat_router, "chat_completion_full", fake_full)
+
+    headers = auth_headers()
+    resp = client.post(
+        "/api/chat/send",
+        headers=headers,
+        json={"user_message": "meta q", "models": ["openai/gpt-4o-mini"],
+              "reasoning_effort": "low"},
+    )
+    assert resp.status_code == 200, resp.text
+    item = resp.json()["responses"][0]
+    assert item["ok"] is True
+    assert item["reasoning"] == "low"
+    assert item["provider"] == "Novita"
+    assert item["gen_id"] == "gen-test-123"
+    assert item["total_tokens"] == 1479
+    assert item["cost"] == 0.0021
+
+    # Sync pull carries the same metadata for the phone.
+    pull = client.get("/api/sync/pull", headers=headers)
+    assert pull.status_code == 200, pull.text
+    convs = pull.json()["conversations"]
+    target = next(c for c in convs if c["title"] and "meta q" in c["title"])
+    answers = [m for m in target["messages"] if m["role"] == "assistant"]
+    assert answers, "assistant message missing from pull"
+    assert answers[-1]["reasoning"] == "low"
+    assert answers[-1]["provider"] == "Novita"
+    assert answers[-1]["gen_id"] == "gen-test-123"
+    assert answers[-1]["total_tokens"] == 1479
+    assert answers[-1]["cost"] == 0.0021
+
+    # Cleanup (tests share one DB file).
+    from sqlalchemy import delete as sa_delete, select as sa_select
+    from app.database import SessionLocal
+    from app.models import Conversation, Message
+    db = SessionLocal()
+    conv_id = target["external_id"]
+    conv = db.execute(
+        sa_select(Conversation).where(Conversation.external_id == conv_id)
+    ).scalars().first()
+    if conv:
+        db.execute(sa_delete(Message).where(Message.conversation_id == conv.id))
+        db.delete(conv)
+        db.commit()
+    db.close()

@@ -180,13 +180,22 @@ def chat_completion(
     max_tokens: int | None = None,
     reasoning_effort: str | None = None,
 ) -> str:
-    """Call a single OpenRouter model synchronously. Returns the reply text.
+    """Call a single OpenRouter model synchronously. Returns the reply text."""
+    return chat_completion_full(
+        model, messages, temperature=temperature, max_tokens=max_tokens,
+        reasoning_effort=reasoning_effort,
+    )["content"]
 
-    A ":flex" model suffix requests the Flex processing tier
-    (service_tier="flex"): cheaper in exchange for slower processing. When the
-    provider does not offer flex for the model (e.g. some Astra releases), the
-    request is automatically retried on the standard tier so the chat still
-    works.
+
+def chat_completion_full(
+    model: str,
+    messages: list[dict[str, str]],
+    temperature: float | None = None,
+    max_tokens: int | None = None,
+    reasoning_effort: str | None = None,
+) -> dict:
+    """Like chat_completion, but also returns the per-message metadata the web
+    UI shows "as in OpenRouter": provider, generation id, token counts, cost.
 
     `reasoning_effort` controls the model's thinking budget via OpenRouter's
     unified `reasoning` parameter: "none" disables reasoning entirely, any of
@@ -208,6 +217,10 @@ def chat_completion(
         payload["reasoning"] = {"enabled": False}
     elif reasoning_effort:
         payload["reasoning"] = {"effort": reasoning_effort}
+    # Ask OpenRouter to report exact usage (token counts + cost) in the
+    # response. Without this, streaming/estimated generations can end up as
+    # 0-tok/$0.00 rows in the OpenRouter logs page.
+    payload["usage"] = {"include": True}
 
     try:
         with httpx.Client(timeout=REQUEST_TIMEOUT) as client:
@@ -254,9 +267,22 @@ def chat_completion(
         raise OpenRouterError(f"Request failed: {exc}") from exc
 
     try:
-        return data["choices"][0]["message"]["content"]
+        content = data["choices"][0]["message"]["content"]
     except (KeyError, IndexError, TypeError) as exc:
         raise OpenRouterError(f"Unexpected response from OpenRouter: {data!r}") from exc
+
+    usage = data.get("usage") or {}
+    if not isinstance(usage, dict):
+        usage = {}
+    return {
+        "content": content,
+        "provider": data.get("provider"),
+        "gen_id": data.get("id"),
+        "tokens_prompt": usage.get("prompt_tokens"),
+        "tokens_completion": usage.get("completion_tokens"),
+        "total_tokens": usage.get("total_tokens"),
+        "cost": usage.get("cost"),
+    }
 
 
 # ---------------------------------------------------------------------------

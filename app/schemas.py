@@ -11,6 +11,14 @@ class MessageOut(BaseModel):
     model: str | None = None
     content: str
     created_at: datetime | None = None
+    # Per-message OpenRouter metadata (assistant replies only).
+    reasoning: str | None = None
+    provider: str | None = None
+    gen_id: str | None = None
+    tokens_prompt: int | None = None
+    tokens_completion: int | None = None
+    total_tokens: int | None = None
+    cost: float | None = None
 
 
 class ConversationSummary(BaseModel):
@@ -144,6 +152,14 @@ class ChatResponseItem(BaseModel):
     # DB id of the persisted assistant message (lets the web UI delete a
     # freshly received answer without reloading the conversation).
     message_id: int | None = None
+    # OpenRouter metadata for the fresh answer (usage popup without a reload).
+    reasoning: str | None = None
+    provider: str | None = None
+    gen_id: str | None = None
+    tokens_prompt: int | None = None
+    tokens_completion: int | None = None
+    total_tokens: int | None = None
+    cost: float | None = None
 
 
 class ChatResponse(BaseModel):
@@ -161,6 +177,14 @@ class ImportMessage(BaseModel):
     role: str = Field(pattern="^(user|assistant|system)$")
     content: str
     model: str | None = None
+    # Optional OpenRouter metadata carried by newer clients (push/pull).
+    reasoning: str | None = None
+    provider: str | None = None
+    gen_id: str | None = None
+    tokens_prompt: int | None = None
+    tokens_completion: int | None = None
+    total_tokens: int | None = None
+    cost: float | None = None
 
 
 class ImportConversation(BaseModel):
@@ -365,6 +389,15 @@ class SyncMessage(BaseModel):
     model: str | None = None
     # UTC timestamp — lets the phone show per-message dates (DD.MM.YY HH.MM).
     created_at: datetime | None = None
+    # OpenRouter metadata (assistant replies): reasoning effort used, who
+    # served the generation and the exact usage/cost.
+    reasoning: str | None = None
+    provider: str | None = None
+    gen_id: str | None = None
+    tokens_prompt: int | None = None
+    tokens_completion: int | None = None
+    total_tokens: int | None = None
+    cost: float | None = None
 
 
 class SyncConversationOut(BaseModel):
