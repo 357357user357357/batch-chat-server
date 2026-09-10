@@ -164,6 +164,21 @@
     </div>
   </div>
 
+  <!-- Message metadata modal (reasoning / provider / usage) -->
+  <div id="meta-modal" class="modal-overlay hidden">
+    <div class="modal">
+      <div class="modal-header">
+        <h3>🧠 Message details</h3>
+        <button id="meta-close" class="btn btn-ghost btn-small">✕</button>
+      </div>
+      <div id="meta-body" class="meta-body"></div>
+      <div class="modal-actions">
+        <button id="meta-logs" class="btn btn-ghost btn-small" style="display:none">⎙ OpenRouter logs</button>
+        <button id="meta-copy" class="btn btn-primary">⧉ Copy</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Settings modal (provider API keys) -->
   <div id="settings-modal" class="modal-overlay hidden">
     <div class="modal">

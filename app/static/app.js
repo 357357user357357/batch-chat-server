@@ -111,6 +111,11 @@ const els = {
   settingsBackupDownload: $("#settings-backup-download"),
   settingsBackupRestoreBtn: $("#settings-backup-restore-btn"),
   settingsBackupFile: $("#settings-backup-file"),
+  metaModal: $("#meta-modal"),
+  metaClose: $("#meta-close"),
+  metaBody: $("#meta-body"),
+  metaLogs: $("#meta-logs"),
+  metaCopy: $("#meta-copy"),
 };
 
 // ---------------------------------------------------------------
@@ -601,6 +606,98 @@ function renderMessages(messages) {
   scrollToBottom();
 }
 
+// ---------------------------------------------------------------
+// Per-message OpenRouter metadata: reasoning effort, serving
+// provider, generation id and exact usage/cost — shown as a small
+// chip under assistant bubbles and a full popup on click.
+// ---------------------------------------------------------------
+function formatCost(cost) {
+  if (typeof cost !== "number" || !Number.isFinite(cost)) return "";
+  return `$${cost.toFixed(6).replace(/0+$/, "").replace(/\.$/, "")}`;
+}
+
+function hasMessageMeta(msg) {
+  return Boolean(
+    msg.reasoning || msg.provider || msg.gen_id ||
+    msg.total_tokens != null || msg.cost != null,
+  );
+}
+
+function metaLabel(msg) {
+  const parts = [];
+  if (msg.reasoning) parts.push(`🧠 ${msg.reasoning}`);
+  if (msg.provider) parts.push(msg.provider);
+  if (msg.total_tokens != null) parts.push(`${msg.total_tokens.toLocaleString()} tok`);
+  const cost = formatCost(msg.cost);
+  if (cost) parts.push(cost);
+  return parts.join(" · ");
+}
+
+function openMetaModal(msg) {
+  const push = (label, value) => {
+    if (value == null || value === "") return;
+    const div = document.createElement("div");
+    div.className = "meta-row";
+    const k = document.createElement("span");
+    k.className = "meta-key";
+    k.textContent = label;
+    const v = document.createElement("span");
+    v.className = "meta-val";
+    v.textContent = value;
+    div.append(k, v);
+    els.metaBody.appendChild(div);
+  };
+
+  els.metaBody.innerHTML = "";
+  push("Reasoning", msg.reasoning);
+  push("Provider", msg.provider);
+  push("Generation id", msg.gen_id);
+  if (msg.tokens_prompt != null || msg.tokens_completion != null || msg.total_tokens != null) {
+    const tok = [msg.tokens_prompt ?? "—", msg.tokens_completion ?? "—", msg.total_tokens ?? "—"];
+    push("Tokens (prompt / completion / total)", tok.join(" / "));
+  }
+  push("Cost", formatCost(msg.cost));
+
+  if (msg.gen_id) {
+    els.metaLogs.style.display = "";
+    els.metaLogs.dataset.genId = msg.gen_id;
+  } else {
+    els.metaLogs.style.display = "none";
+  }
+
+  els.metaModal.classList.remove("hidden");
+}
+
+function closeMetaModal() {
+  els.metaModal.classList.add("hidden");
+}
+
+els.metaClose.addEventListener("click", closeMetaModal);
+els.metaModal.addEventListener("click", (e) => {
+  if (e.target === els.metaModal) closeMetaModal();
+});
+
+els.metaLogs.addEventListener("click", () => {
+  const id = els.metaLogs.dataset.genId;
+  if (id) window.open(`https://openrouter.ai/activity?generation_id=${encodeURIComponent(id)}`, "_blank");
+});
+
+els.metaCopy.addEventListener("click", async () => {
+  const lines = [];
+  els.metaBody.querySelectorAll(".meta-row").forEach((row) => {
+    const k = row.querySelector(".meta-key");
+    const v = row.querySelector(".meta-val");
+    if (k && v) lines.push(`${k.textContent}: ${v.textContent}`);
+  });
+  try {
+    await navigator.clipboard.writeText(lines.join("\n"));
+    els.metaCopy.textContent = "✓ Copied";
+  } catch {
+    els.metaCopy.textContent = "Clipboard blocked";
+  }
+  setTimeout(() => { els.metaCopy.textContent = "⧉ Copy"; }, 1600);
+});
+
 function appendMessage(msg) {
   const div = document.createElement("div");
   div.className = `message ${msg.role}`;
@@ -648,6 +745,16 @@ function appendMessage(msg) {
   copyBtn.textContent = "⧉ Copy";
   copyBtn.addEventListener("click", () => copyToClipboard(msg.content || "", copyBtn));
   div.appendChild(copyBtn);
+
+  if (msg.role === "assistant" && hasMessageMeta(msg)) {
+    const metaBtn = document.createElement("button");
+    metaBtn.type = "button";
+    metaBtn.className = "message-meta";
+    metaBtn.title = "Reasoning, provider, generation id and usage";
+    metaBtn.textContent = `🧠 ${metaLabel(msg)}`;
+    metaBtn.addEventListener("click", () => openMetaModal(msg));
+    div.appendChild(metaBtn);
+  }
 
   const deleteBtn = document.createElement("button");
   deleteBtn.type = "button";
@@ -1055,7 +1162,19 @@ els.chatForm.addEventListener("submit", async (e) => {
 
     appendMessage({ ...resp.user_message, webSearch: resp.web_search_used === true });
     resp.responses.forEach((r) => {
-      if (r.ok) appendMessage({ id: r.message_id ?? null, role: "assistant", content: r.content, model: r.model });
+      if (r.ok) appendMessage({
+        id: r.message_id ?? null,
+        role: "assistant",
+        content: r.content,
+        model: r.model,
+        reasoning: r.reasoning,
+        provider: r.provider,
+        gen_id: r.gen_id,
+        tokens_prompt: r.tokens_prompt,
+        tokens_completion: r.tokens_completion,
+        total_tokens: r.total_tokens,
+        cost: r.cost,
+      });
       else appendError(r.model, r.error);
     });
     await loadConversations();
