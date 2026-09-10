@@ -1263,5 +1263,70 @@ def test_self_registration_login_and_isolation(monkeypatch):
     ).status_code == 422
 
 
+def test_delete_account_frees_email_and_wipes_data(monkeypatch):
+    """Self-service deletion: a client removes their own account — every trace
+    of its data disappears, the e-mail is freed for re-registration from zero,
+    and the owner account is protected from deletion."""
+    from app.services import mailer
+
+    sent = []
+    monkeypatch.setattr(mailer, "smtp_configured", lambda: True)
+    monkeypatch.setattr(
+        mailer, "send_message", lambda to, subject, body: sent.append((to, subject, body))
+    )
+
+    def _register_and_confirm(email: str) -> str:
+        r = client.post("/api/auth/register", json={"email": email, "password": "del-pw-123"})
+        assert r.status_code == 202, r.text
+        token = [seg for seg in sent[-1][2].split() if "confirm-email?token=" in seg][0]
+        token = token.split("token=")[1].rstrip(")\"'.,")
+        assert client.get(f"/api/auth/confirm-email?token={token}").status_code == 200
+        _c = client.post(
+            "/api/auth/confirm-email", data={"token": token}, follow_redirects=False
+        )
+        assert _c.status_code == 302, (_c.status_code, _c.text[:300])
+        logged = client.post("/api/auth/login", json={"login": email, "password": "del-pw-123"})
+        assert logged.status_code == 200, logged.text
+        return logged.json()["token"]
+
+    tok = _register_and_confirm("deleteme@x.io")
+    hdrs = {"Authorization": f"Bearer {tok}"}
+    # The client creates a dialog that must vanish with the account.
+    conv = client.post("/api/conversations", headers=hdrs, json={"title": "doomed"})
+    assert conv.status_code == 201, conv.text
+
+    owner = auth_headers()
+    # The owner account is protected from self-deletion.
+    assert client.delete("/api/auth/account", headers=owner).status_code == 403
+    # The client deletes their own account.
+    gone = client.delete("/api/auth/account", headers=hdrs)
+    assert gone.status_code == 200, gone.text
+    assert gone.json() == {"ok": True, "deleted_dialogs": 1}
+    # The session token died with the account.
+    assert client.get("/api/auth/me", headers=hdrs).status_code == 401
+    # The old credentials no longer resolve (account is gone).
+    assert client.post(
+        "/api/auth/login", json={"login": "deleteme@x.io", "password": "del-pw-123"}
+    ).status_code == 404
+    # The dialog row is really gone from the database.
+    from app.database import SessionLocal
+    from app.models import Conversation
+
+    db = SessionLocal()
+    try:
+        assert db.get(Conversation, conv.json()["id"]) is None
+    finally:
+        db.close()
+    # The e-mail is freed: re-registration from zero works, and the fresh
+    # account starts with zero dialogs (owner's data untouched throughout).
+    tok2 = _register_and_confirm("deleteme@x.io")
+    hdrs2 = {"Authorization": f"Bearer {tok2}"}
+    assert client.get("/api/conversations", headers=hdrs2).json() == []
+    owner_titles = [c["title"] for c in client.get("/api/conversations", headers=owner).json()]
+    assert "doomed" not in owner_titles
+    # Clean up the re-registered account so the suite stays idempotent.
+    assert client.delete("/api/auth/account", headers=hdrs2).status_code == 200
+
+
 def test_google_oauth_disabled_without_credentials():
     assert client.get("/api/auth/oauth/google/start").status_code == 503

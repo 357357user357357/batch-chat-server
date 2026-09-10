@@ -109,6 +109,8 @@ const els = {
   accountAdminPassword: $("#account-admin-password"),
   accountCreate: $("#account-create"),
   accountList: $("#account-list"),
+  accountDanger: $("#account-danger"),
+  accountDelete: $("#account-delete"),
   accountCode: $("#account-code"),
   settingsBackupDownload: $("#settings-backup-download"),
   settingsBackupRestoreBtn: $("#settings-backup-restore-btn"),
@@ -1428,7 +1430,36 @@ async function loadAccount() {
   } catch {
     els.accountList.textContent = "";
   }
+  // Danger zone: clients may self-delete; the owner account cannot.
+  try {
+    const me = await api("/api/auth/me");
+    els.accountDanger.classList.toggle("hidden", !!me.is_owner);
+  } catch {
+    els.accountDanger.classList.add("hidden");
+  }
 }
+
+els.accountDelete.addEventListener("click", async () => {
+  const really = confirm(
+    "Delete your account?\n\nALL your dialogs, messages and batches will be permanently removed, and your e-mail/login freed so you can register again from zero. This cannot be undone.",
+  );
+  if (!really) return;
+  els.accountDelete.disabled = true;
+  els.accountList.className = "import-status";
+  els.accountList.textContent = "Deleting account…";
+  try {
+    const res = await api("/api/auth/account", { method: "DELETE" });
+    alert(
+      `Account deleted (${res.deleted_dialogs} dialog(s) removed). You can now register again with the same e-mail.`,
+    );
+    localStorage.removeItem("bc_token");
+    location.reload();
+  } catch (err) {
+    els.accountList.className = "import-status err";
+    els.accountList.textContent = `Delete failed: ${err.message}`;
+    els.accountDelete.disabled = false;
+  }
+});
 
 els.accountCreate.addEventListener("click", async () => {
   const adminPassword = els.accountAdminPassword.value;

@@ -10,7 +10,7 @@ from urllib.parse import urlencode
 import httpx
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from app.config import settings
@@ -427,5 +427,68 @@ def logout(
 
 
 @router.get("/auth/me")
-def me(account_id: str = Depends(get_account_id)) -> dict:
-    return {"ok": True, "account_id": account_id}
+def me(account_id: str = Depends(get_account_id), db: Session = Depends(get_db)) -> dict:
+    from app.services.account import ensure_owner_account
+
+    return {
+        "ok": True,
+        "account_id": account_id,
+        "is_owner": account_id == ensure_owner_account(db).id,
+    }
+
+
+@router.delete("/auth/account")
+def delete_own_account(
+    account_id: str = Depends(get_account_id),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Self-service account deletion.
+
+    Permanently removes the caller's account with ALL its data: dialogs,
+    messages, tombstones, batch jobs/items and every session token (the
+    current one included — the caller is logged out everywhere). The e-mail
+    and login are freed, so the same address can register again from zero.
+    The instance owner account cannot be deleted: it carries the provider
+    keys and the master-password identity.
+    """
+    from app.models import BatchItem, BatchJob, Conversation, Message, MessageTombstone
+    from app.services.account import ensure_owner_account
+
+    account = db.get(Account, account_id)
+    if account is None:
+        raise HTTPException(status_code=404, detail="Unknown account")
+    if account.id == ensure_owner_account(db).id:
+        raise HTTPException(
+            status_code=403,
+            detail="The owner account cannot be deleted — it manages this server",
+        )
+
+    conv_ids = db.scalars(
+        select(Conversation.id).where(Conversation.account_id == account.id)
+    ).all()
+    if conv_ids:
+        job_ids = db.scalars(
+            select(BatchJob.id).where(
+                BatchJob.account_id == account.id,
+                BatchJob.conversation_id.in_(conv_ids),
+            )
+        ).all()
+        if job_ids:
+            db.execute(delete(BatchItem).where(BatchItem.batch_job_id.in_(job_ids)))
+        db.execute(delete(BatchJob).where(BatchJob.conversation_id.in_(conv_ids)))
+        db.execute(
+            delete(MessageTombstone).where(MessageTombstone.conversation_id.in_(conv_ids))
+        )
+        db.execute(delete(Message).where(Message.conversation_id.in_(conv_ids)))
+        db.execute(delete(Conversation).where(Conversation.id.in_(conv_ids)))
+    # Any account-scoped batches without a conversation (defensive).
+    other_job_ids = db.scalars(
+        select(BatchJob.id).where(BatchJob.account_id == account.id)
+    ).all()
+    if other_job_ids:
+        db.execute(delete(BatchItem).where(BatchItem.batch_job_id.in_(other_job_ids)))
+        db.execute(delete(BatchJob).where(BatchJob.id.in_(other_job_ids)))
+    db.execute(delete(AuthToken).where(AuthToken.account_id == account.id))
+    db.delete(account)
+    db.commit()
+    return {"ok": True, "deleted_dialogs": len(conv_ids)}
