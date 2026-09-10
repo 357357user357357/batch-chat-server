@@ -1,4 +1,5 @@
 import base64
+import html
 import json
 import re
 import secrets
@@ -7,8 +8,8 @@ from datetime import timedelta
 from urllib.parse import urlencode
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import RedirectResponse
+from fastapi import APIRouter, Depends, Form, HTTPException, Request
+from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -213,8 +214,43 @@ def register(payload: RegisterRequest, request: Request, db: Session = Depends(g
 
 
 @router.get("/auth/confirm-email")
-def confirm_email(token: str, db: Session = Depends(get_db)):  # -> RedirectResponse
-    """Confirmation link target: marks the account's e-mail as confirmed."""
+def confirm_email_page(token: str, db: Session = Depends(get_db)):  # -> HTMLResponse
+    """Confirmation link target: shows a confirmation page with an explicit
+    button. Deliberately does NOT confirm on GET — link-preview bots
+    (Telegram, messengers, mail scanners) auto-fetch GET URLs, which would
+    confirm the account without the human ever seeing the mail."""
+    account = db.scalar(select(Account).where(Account.confirm_token == token.strip()))
+    if account is None or not account.confirm_token_expires or account.confirm_token_expires < utcnow():
+        raise HTTPException(status_code=400, detail="Invalid or expired confirmation link")
+    safe_token = html.escape(token.strip(), quote=True)
+    html_page = f"""<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Batch Chat — confirm e-mail</title>
+<style>body{{font-family:system-ui,sans-serif;background:#0f1115;color:#e6e6e6;
+display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0}}
+.card{{background:#1a1d24;border:1px solid #2a2e38;border-radius:12px;padding:32px;
+max-width:420px;text-align:center}}
+button{{margin-top:20px;padding:12px 28px;font-size:16px;border:0;border-radius:8px;
+background:#4c8dff;color:#fff;cursor:pointer}}
+button:hover{{background:#3a7ae8}}</style></head>
+<body><div class="card"><h2>Confirm your e-mail</h2>
+<p>Click the button below to confirm this address for
+<strong>{html.escape(account.email or account.label or "your account", quote=True)}</strong>
+and enable login with e-mail + password.</p>
+<form method="post" action="/api/auth/confirm-email">
+<input type="hidden" name="token" value="{safe_token}">
+<button type="submit">Confirm e-mail</button></form>
+<p style="margin-top:18px;font-size:13px;opacity:.6">The link is valid for 24 hours.</p>
+</div></body></html>"""
+    return HTMLResponse(content=html_page, status_code=200)
+
+
+@router.post("/auth/confirm-email")
+def confirm_email_accept(
+    token: str = Form(...), db: Session = Depends(get_db)
+):  # -> RedirectResponse
+    """Explicit confirmation (the button on the confirmation page)."""
     account = db.scalar(select(Account).where(Account.confirm_token == token.strip()))
     if account is None or not account.confirm_token_expires or account.confirm_token_expires < utcnow():
         raise HTTPException(status_code=400, detail="Invalid or expired confirmation link")

@@ -1230,10 +1230,19 @@ def test_self_registration_login_and_isolation(monkeypatch):
     assert client.post(
         "/api/auth/login", json={"login": "newclient@x.io", "password": "reg-pw-123"}
     ).status_code == 403
-    # Confirm via the mailed link.
+    # Confirm via the mailed link: GET shows the button page WITHOUT confirming
+    # (link-preview bots fetch GET URLs; only the explicit POST confirms).
     token = [seg for seg in sent[0][2].split() if "confirm-email?token=" in seg][0]
-    token = token.split("token=")[1]
-    confirmed = client.get(f"/api/auth/confirm-email?token={token}", follow_redirects=False)
+    token = token.split("token=")[1].rstrip(")\"'.,")
+    page = client.get(f"/api/auth/confirm-email?token={token}")
+    assert page.status_code == 200 and "Confirm e-mail" in page.text
+    # Login is STILL blocked after merely opening the link (no button press).
+    assert client.post(
+        "/api/auth/login", json={"login": "newclient@x.io", "password": "reg-pw-123"}
+    ).status_code == 403
+    confirmed = client.post(
+        "/api/auth/confirm-email", data={"token": token}, follow_redirects=False
+    )
     assert confirmed.status_code == 302
     # Now login works (e-mail is case-insensitive) and the account is isolated.
     again = client.post(
