@@ -341,3 +341,95 @@ def test_prompt_cache_stats_buckets_and_totals():
     with sqlite3.connect(engine.url.database) as conn:
         conn.execute("DELETE FROM messages WHERE conversation_id=?", (conv["id"],))
         conn.execute("DELETE FROM conversations WHERE id=?", (conv["id"],))
+
+
+# ---------------------------------------------------------------------------
+# Owner e-mail binding: e-mail login lands on the owner account
+# ---------------------------------------------------------------------------
+
+def test_owner_email_binding_and_email_login(saved_keys):
+    """Binding an e-mail to the owner account: e-mail + master password (and
+    Google, by the same lookup) resolve to the owner; a client account that
+    held the address loses it; the bound session manages keys."""
+    from sqlalchemy import select
+
+    from app.models import Account
+
+    test_email = "owner-guy@example.com"
+
+    # A client account currently squatting on the address.
+    squatter = client.post(
+        "/api/auth/accounts",
+        json={"admin_password": "test", "label": "squatter",
+              "client_password": "pw12345"},
+    )
+    assert squatter.status_code == 201, squatter.text
+    with SessionLocal() as db:
+        acc = db.get(Account, squatter.json()["account_id"])
+        acc.email = test_email
+        db.commit()
+
+    headers = auth_headers()
+
+    # The view exposes the current binding (empty before).
+    view = client.get("/api/settings", headers=headers).json()
+    assert "owner_email" in view
+
+    resp = client.post(
+        "/api/settings/owner-email", headers=headers, json={"email": test_email},
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["owner_email"] == test_email
+
+    # The squatter lost the address; the owner account now holds it.
+    with SessionLocal() as db:
+        assert db.get(Account, squatter.json()["account_id"]).email is None
+        owner = db.scalar(select(Account).where(Account.email == test_email))
+        assert owner is not None and owner.email_confirmed
+
+    # E-mail + master password login lands on the OWNER account.
+    resp = client.post(
+        "/api/auth/login", json={"login": test_email, "password": "test"},
+    )
+    assert resp.status_code == 200, resp.text
+    bound_headers = {"Authorization": f"Bearer {resp.json()['token']}"}
+    me = client.get("/api/auth/me", headers=bound_headers).json()
+    assert me["is_owner"] is True
+
+    # The bound session can manage keys (paste one, then re-check it).
+    resp = client.put(
+        "/api/settings", headers=bound_headers, json={"tavily_api_key": "tvly-good"},
+    )
+    assert resp.status_code == 200, resp.text
+    resp = client.post(
+        "/api/settings/keys/tavily_api_key/check", headers=bound_headers,
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["status"] == "valid"
+
+    # Invalid address is rejected; empty unbinds.
+    assert client.post(
+        "/api/settings/owner-email", headers=headers, json={"email": "nope"},
+    ).status_code == 422
+    assert client.post(
+        "/api/settings/owner-email", headers=headers, json={"email": ""},
+    ).status_code == 200
+
+    # Client sessions still get 403 on the settings router.
+    resp = client.post(
+        "/api/auth/accounts",
+        json={"admin_password": "test", "label": "plain-client",
+              "client_password": "pw12345"},
+    )
+    client_login = client.post(
+        "/api/auth/login",
+        json={"login": squatter.json()["account_id"], "password": "pw12345"},
+    ).json()
+    assert client.post(
+        "/api/settings/owner-email",
+        headers={"Authorization": f"Bearer {client_login['token']}"},
+        json={"email": "x@y.zz"},
+    ).status_code == 403
+
+    with SessionLocal() as db:
+        assert db.get(Account, squatter.json()["account_id"]) is not None

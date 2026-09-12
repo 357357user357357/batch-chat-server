@@ -79,7 +79,9 @@ def current_view(db: Session | None = None) -> dict:
     """UI-safe snapshot: secrets are masked, plain fields shown as-is.
 
     With a db session, the OpenRouter/Tavily entries also carry their stored
-    provider-check `status` (from app/services/key_status.py)."""
+    provider-check `status` (from app/services/key_status.py) and the owner
+    account's bound e-mail is included as `owner_email`."""
+    from app.services.account import ensure_owner_account
     from app.services.key_status import CHECKED_FIELDS, get_status
 
     view: dict = {}
@@ -91,6 +93,8 @@ def current_view(db: Session | None = None) -> dict:
         view[field] = entry
     for field in PLAIN_FIELDS:
         view[field] = {"configured": bool(getattr(settings, field, "")), "value": getattr(settings, field, "")}
+    if db is not None:
+        view["owner_email"] = ensure_owner_account(db).email or ""
     return view
 
 

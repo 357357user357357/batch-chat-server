@@ -80,6 +80,32 @@ def default_account_id(db: Session) -> str:
     return ensure_owner_account(db).id
 
 
+def bind_owner_email(db: Session, email: str) -> Account:
+    """Bind an e-mail address to the owner account so e-mail logins and
+    Google sign-ins land on it (owner rights, whole-server stats).
+
+    An address must resolve to exactly one account: if a client account
+    currently holds it, it is cleared there first (that account keeps its
+    data but loses the e-mail login). The owner account never needs mailed
+    confirmation — binding it from an owner session IS the confirmation.
+    Empty address unbinds."""
+    owner = ensure_owner_account(db)
+    addr = (email or "").strip().lower()
+    if addr:
+        squatter = db.scalar(select(Account).where(Account.email == addr))
+        if squatter is not None and squatter.id != owner.id:
+            squatter.email = None
+            squatter.email_confirmed = False
+            squatter.confirm_token = None
+            squatter.confirm_token_expires = None
+    owner.email = addr or None
+    owner.email_confirmed = bool(addr)
+    owner.confirm_token = None
+    owner.confirm_token_expires = None
+    db.commit()
+    return owner
+
+
 def get_account(db: Session, account_id: str) -> Account | None:
     return db.get(Account, account_id)
 

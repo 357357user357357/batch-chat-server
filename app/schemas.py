@@ -348,6 +348,13 @@ class SettingsUpdate(BaseModel):
     cache_keepalive_hours: int | None = None
 
 
+class OwnerEmailUpdate(BaseModel):
+    """Bind an e-mail address to the owner account: signing in with it
+    (password or Google) lands on the owner account. Empty string unbinds."""
+
+    email: str = ""
+
+
 class SettingsBackup(BaseModel):
     """Raw (unmasked) credential export/import file — download before
     decommissioning a server, upload on the new one to restore in one step."""

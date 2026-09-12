@@ -99,6 +99,8 @@ const els = {
   settingsAwsRegion: $("#settings-aws-region"),
   settingsStatus: $("#settings-status"),
   settingsSubmit: $("#settings-submit"),
+  settingsOwnerEmail: $("#settings-owner-email"),
+  ownerEmailSave: $("#owner-email-save"),
   settingsBackupStatus: $("#settings-backup-status"),
   accountStatus: $("#account-status"),
   accountReveal: $("#account-reveal"),
@@ -1837,9 +1839,18 @@ async function loadSettings() {
     els.settingsGoogleProject.value = data.google_project_id.value || "";
     els.settingsGoogleLocation.value = data.google_location.value || "";
     els.settingsAwsRegion.value = data.aws_region.value || "";
+    if (data.owner_email !== undefined) {
+      els.settingsOwnerEmail.value = data.owner_email || "";
+      els.settingsOwnerEmail.placeholder = data.owner_email
+        ? data.owner_email : "you@example.com";
+    }
   } catch (err) {
     els.settingsStatus.classList.add("err");
-    els.settingsStatus.textContent = `Failed to load: ${err.message}`;
+    els.settingsStatus.textContent = err.message === "Owner account required"
+      ? "Owner account required — log in leaving the e-mail field empty, "
+        + "with the server master password (you can bind your e-mail to the "
+        + "owner account there)."
+      : `Failed to load: ${err.message}`;
   }
 }
 
@@ -1907,6 +1918,29 @@ els.keyDeleteOpenrouter.addEventListener("click", () =>
   deleteKey("openrouter_api_key", els.keyDeleteOpenrouter));
 els.keyDeleteTavily.addEventListener("click", () =>
   deleteKey("tavily_api_key", els.keyDeleteTavily));
+
+els.ownerEmailSave.addEventListener("click", async () => {
+  const email = els.settingsOwnerEmail.value.trim();
+  els.ownerEmailSave.disabled = true;
+  els.settingsStatus.className = "import-status";
+  els.settingsStatus.textContent = "Binding…";
+  try {
+    const res = await api("/api/settings/owner-email", {
+      method: "POST",
+      body: JSON.stringify({ email }),
+    });
+    els.settingsStatus.classList.add("ok");
+    els.settingsStatus.textContent = res.owner_email
+      ? `Owner e-mail bound: ${res.owner_email}. Log out and sign in with it `
+        + "(password or Google) to get owner rights."
+      : "Owner e-mail unbound.";
+  } catch (err) {
+    els.settingsStatus.classList.add("err");
+    els.settingsStatus.textContent = `Bind failed: ${err.message}`;
+  } finally {
+    els.ownerEmailSave.disabled = false;
+  }
+});
 
 els.settingsSubmit.addEventListener("click", async () => {
   const body = {};

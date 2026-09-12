@@ -1,8 +1,10 @@
+import re
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.schemas import SettingsBackup, SettingsUpdate
+from app.schemas import OwnerEmailUpdate, SettingsBackup, SettingsUpdate
 from app.security import get_current_token, get_owner_account_id
 
 # OWNER-ONLY router: every endpoint requires the instance owner account (the
@@ -12,6 +14,8 @@ from app.services.key_status import CHECKED_FIELDS, check_and_store, clear_statu
 from app.services.settings_store import current_view, export_backup, import_backup, save_overrides
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
+
+_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 
 @router.get("")
@@ -70,6 +74,27 @@ def delete_key(
     save_overrides(db, {field: ""})
     clear_status(db, field)
     return current_view(db)
+
+
+@router.post("/owner-email")
+def set_owner_email(
+    payload: OwnerEmailUpdate,
+    db: Session = Depends(get_db),
+    _account_id: str = Depends(get_owner_account_id),
+) -> dict:
+    """Bind an e-mail address to the owner account.
+
+    Afterwards, signing in with that address (e-mail + master password, or
+    Google) logs into the owner account — the one that manages provider
+    credentials. Useful when the owner prefers their e-mail/Google identity
+    over the bare master-password login."""
+    from app.services.account import bind_owner_email
+
+    email = payload.email.strip().lower()
+    if email and not _EMAIL_RE.match(email):
+        raise HTTPException(status_code=422, detail="Enter a valid e-mail address")
+    bind_owner_email(db, email)
+    return {"ok": True, "owner_email": email}
 
 
 @router.get("/backup", response_model=SettingsBackup)
