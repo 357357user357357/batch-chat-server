@@ -176,6 +176,12 @@ app.include_router(sync.router)
 start_batch_worker()
 start_cache_keeper()
 
+# /health must be registered BEFORE the "/" StaticFiles mount below: a mount
+# at "/" matches every path, so any route added after it would be shadowed.
+@app.get("/health")
+def health():
+    return {"ok": True}
+
 # Serve the static web UI (Plain HTML/JS, no build step required)
 ui_dir = Path(__file__).parent / "static"
 if ui_dir.is_dir():
