@@ -130,6 +130,7 @@ Interactive docs are available at `/api/docs`.
 | DELETE | `/api/conversations/{id}` | Delete conversation |
 | POST | `/api/conversations/{id}/messages` | Manually append a message |
 | POST | `/api/chat/send` | Send one message to N models in parallel (stores results) |
+| POST | `/api/chat/retry` | 🔄 Re-answer one assistant reply with other model(s) — new answers stored right after the original |
 | GET | `/api/chat/models` | List default model suggestions |
 | POST | `/api/import` | Bulk-import conversations (generic JSON) |
 | POST | `/api/import/phone` | Import Android-app AsyncStorage JSON (`dialogs` + `batches`) |

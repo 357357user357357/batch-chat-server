@@ -100,27 +100,34 @@ def _create_conversation(db, job: BatchJob) -> None:
     )
     db.add(conv)
     db.flush()
+    position = 0
     for item in job.items:
         if item.status == "pending":
             continue
+        position += 1
         db.add(Message(
             conversation_id=conv.id,
             role="user",
             content=item.prompt or item.custom_id,
+            sort_index=float(position),
         ))
         if item.status == "completed" and item.answer:
+            position += 1
             db.add(Message(
                 conversation_id=conv.id,
                 role="assistant",
                 content=item.answer,
                 model=job.model,
+                sort_index=float(position),
             ))
         elif item.error:
+            position += 1
             db.add(Message(
                 conversation_id=conv.id,
                 role="assistant",
                 content=f"[error] {item.error}",
                 model=job.model,
+                sort_index=float(position),
             ))
     job.conversation_id = conv.id
 

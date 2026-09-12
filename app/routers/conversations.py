@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session, selectinload
 
 from app.database import get_db
 from app.device import device_label
-from app.models import AppSetting, Conversation, Message, MessageTombstone, utcnow
+from app.models import AppSetting, Conversation, Message, MessageTombstone, next_sort_index, utcnow
 from app.schemas import (
     ConversationCreate,
     ConversationDetail,
@@ -187,6 +187,7 @@ def add_message(
         role=payload.role,
         content=payload.content,
         model=payload.model,
+        sort_index=next_sort_index(db, conversation_id),
     )
     db.add(msg)
     db.commit()

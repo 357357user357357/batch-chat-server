@@ -698,7 +698,7 @@ els.metaCopy.addEventListener("click", async () => {
   setTimeout(() => { els.metaCopy.textContent = "⧉ Copy"; }, 1600);
 });
 
-function appendMessage(msg) {
+function appendMessage(msg, opts = {}) {
   const div = document.createElement("div");
   div.className = `message ${msg.role}`;
   div.dataset.messageId = msg.id;
@@ -756,6 +756,16 @@ function appendMessage(msg) {
     div.appendChild(metaBtn);
   }
 
+  if (msg.role === "assistant") {
+    const retryBtn = document.createElement("button");
+    retryBtn.type = "button";
+    retryBtn.className = "message-retry";
+    retryBtn.title = "🔄 Re-answer this question with other model(s) — the fresh answers appear right after this one";
+    retryBtn.textContent = "🔄 Retry";
+    retryBtn.addEventListener("click", () => retryMessage(msg, retryBtn, div));
+    div.appendChild(retryBtn);
+  }
+
   const deleteBtn = document.createElement("button");
   deleteBtn.type = "button";
   deleteBtn.className = "message-delete";
@@ -764,15 +774,21 @@ function appendMessage(msg) {
   deleteBtn.addEventListener("click", () => deleteMessage(msg, div));
   div.appendChild(deleteBtn);
 
-  els.messages.appendChild(div);
-  scrollToBottom();
+  if (opts.afterNode && opts.afterNode.parentNode === els.messages) {
+    // 🔄 Retry: the fresh answers appear right after the retried one.
+    opts.afterNode.after(div);
+    div.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  } else {
+    els.messages.appendChild(div);
+    scrollToBottom();
+  }
+  return div;
 }
 
 /** Delete one question/answer inside the open dialogue. The server archives
  * the text (soft delete + tombstone) and every synced device — including the
  * phone — drops it on its next sync. */
-async function deleteMessage(msg, node) {
-  if (!msg.id || !state.currentConversationId) {
+async function deleteMessage(msg, node) {  if (!msg.id || !state.currentConversationId) {
     alert("This message has no id yet — reopen the conversation and try again.");
     return;
   }
@@ -790,6 +806,82 @@ async function deleteMessage(msg, node) {
     }
   } catch (err) {
     alert(`Delete failed: ${err.message}`);
+  }
+}
+
+/** 🔄 Re-answer one assistant reply with other model(s): asks for the model
+ * id(s) (comma-separate to compare several), POSTs /api/chat/retry and inserts
+ * the fresh answers right after the retried one. Old answers are kept — delete
+ * any you don't want as usual. */
+async function retryMessage(msg, btn, node) {
+  if (!msg.id || !state.currentConversationId) {
+    alert("This answer has no id yet — reopen the conversation and try again.");
+    return;
+  }
+  const fallback = msg.model
+    || state.liveModel
+    || (state.selectedModels || [])[0]
+    || "";
+  const input = prompt(
+    "Re-answer with model(s) — comma-separate several (e.g. openai/gpt-4o-mini, deepseek/deepseek-chat):",
+    fallback,
+  );
+  if (input === null) return;
+  const models = input.split(",").map((s) => s.trim()).filter(Boolean).slice(0, 20);
+  if (!models.length) return;
+
+  const original = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = "Retrying…";
+  try {
+    const resp = await api("/api/chat/retry", {
+      method: "POST",
+      body: JSON.stringify({
+        conversation_id: state.currentConversationId,
+        message_id: msg.id,
+        models,
+        ...(els.reasoningSelect.value
+          ? { reasoning_effort: els.reasoningSelect.value }
+          : {}),
+      }),
+    });
+    // Insert every returned answer right after the retried one, in order.
+    let anchor = node;
+    resp.responses.forEach((r) => {
+      if (!anchor) return;
+      let inserted = null;
+      if (r.ok) {
+        inserted = appendMessage({
+          id: r.message_id ?? null,
+          role: "assistant",
+          content: r.content,
+          model: r.model,
+          reasoning: r.reasoning,
+          provider: r.provider,
+          gen_id: r.gen_id,
+          tokens_prompt: r.tokens_prompt,
+          tokens_completion: r.tokens_completion,
+          total_tokens: r.total_tokens,
+          cost: r.cost,
+        }, { afterNode: anchor });
+      } else {
+        inserted = appendError(r.model, r.error, anchor);
+      }
+      if (inserted) anchor = inserted;
+    });
+    const conv = state.conversations.find((c) => c.id === state.currentConversationId);
+    if (conv) {
+      const added = resp.responses.filter((r) => r.ok).length;
+      if (typeof conv.message_count === "number") {
+        conv.message_count += added;
+      }
+      renderConversationList();
+    }
+  } catch (err) {
+    alert(`Retry failed: ${err.message}`);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = original;
   }
 }
 
@@ -1029,7 +1121,7 @@ function copyToClipboard(text, btn) {
   }
 }
 
-function appendError(model, error) {
+function appendError(model, error, afterNode = null) {
   const div = document.createElement("div");
   div.className = "message assistant";
   const modelTag = document.createElement("span");
@@ -1039,8 +1131,13 @@ function appendError(model, error) {
   err.className = "message-err";
   err.textContent = `⚠ ${error}`;
   div.append(modelTag, err);
-  els.messages.appendChild(div);
-  scrollToBottom();
+  if (afterNode && afterNode.parentNode === els.messages) {
+    afterNode.after(div);
+  } else {
+    els.messages.appendChild(div);
+    scrollToBottom();
+  }
+  return div;
 }
 
 function scrollToBottom() {

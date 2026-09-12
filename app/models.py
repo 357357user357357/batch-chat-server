@@ -1,8 +1,8 @@
 from datetime import datetime, timezone
 from typing import Optional
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, String, Text
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, String, Text, func, select
+from sqlalchemy.orm import Mapped, mapped_column, relationship, Session
 
 from app.database import Base
 
@@ -103,7 +103,11 @@ class Conversation(Base):
     messages: Mapped[list["Message"]] = relationship(
         back_populates="conversation",
         cascade="all, delete-orphan",
-        order_by="Message.id",
+        # Positional order: retried answers are INSERTED between existing
+        # messages (right after the original answer) via sort_index, which
+        # plain ids cannot express. NULLs (never after the migration
+        # backfill) fall back to id order defensively.
+        order_by="(Message.sort_index.is_(None), Message.sort_index, Message.id)",
     )
 
 
@@ -122,6 +126,12 @@ class Message(Base):
     # stays archived in the DB, but the message no longer shows up in the
     # dialog, in sync pulls, or on other devices.
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    # Positional sort key: order inside the dialog. Equals id for messages
+    # created before this column existed (backfill), so the display order of
+    # existing dialogs is untouched; a retried answer gets a value BETWEEN
+    # the original answer and the next message, so it appears right after
+    # the answer it retried on every synced device.
+    sort_index: Mapped[float | None] = mapped_column(Float, nullable=True, index=True)
     # Which device deleted this Q/A (audit trail on the master server).
     deleted_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
     # Per-message "as in OpenRouter" metadata for assistant replies: which
@@ -220,3 +230,21 @@ class BatchItem(Base):
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     batch_job: Mapped["BatchJob"] = relationship(back_populates="items")
+
+
+def next_sort_index(db: Session, conversation_id: int) -> float:
+    """One past the highest positional key among a dialog's live messages —
+    the value for a message APPENDED at the end of the dialog."""
+    current_max = db.scalar(
+        select(func.max(Message.sort_index)).where(
+            Message.conversation_id == conversation_id,
+            Message.deleted_at.is_(None),
+        )
+    )
+    return (current_max or 0.0) + 1.0
+
+
+def live_message_sort_key(m: Message) -> tuple[int, float, int]:
+    """Mirror of the relationship ordering (NULLs last, then sort_index, id)
+    for sorting an already-loaded message list in Python."""
+    return (1 if m.sort_index is None else 0, m.sort_index or 0.0, m.id)

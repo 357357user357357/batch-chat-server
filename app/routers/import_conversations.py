@@ -35,13 +35,14 @@ def import_conversations(
         )
         db.add(conv)
         db.flush()
-        for msg in item.messages:
+        for position, msg in enumerate(item.messages, start=1):
             db.add(
                 Message(
                     conversation_id=conv.id,
                     role=msg.role,
                     content=msg.content,
                     model=msg.model,
+                    sort_index=float(position),
                 )
             )
             messages_created += 1
@@ -141,7 +142,7 @@ def _store_conversation(
     )
     db.add(conv)
     db.flush()
-    for msg in messages:
+    for position, msg in enumerate(messages, start=1):
         db.add(
             Message(
                 conversation_id=conv.id,
@@ -155,5 +156,6 @@ def _store_conversation(
                 tokens_completion=msg.get("tokens_completion"),
                 total_tokens=msg.get("total_tokens"),
                 cost=msg.get("cost"),
+                sort_index=float(position),
             )
         )

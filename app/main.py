@@ -57,6 +57,14 @@ def _run_migrations() -> None:
             conn.execute(text("ALTER TABLE messages ADD COLUMN deleted_at DATETIME"))
         if "deleted_by" not in msg_existing:
             conn.execute(text("ALTER TABLE messages ADD COLUMN deleted_by VARCHAR(64)"))
+        # Positional order (🔄 retry inserts answers between existing ones).
+        # The backfill keys old rows by id, so the previous display order
+        # (id order) is preserved exactly.
+        if "sort_index" not in msg_existing:
+            conn.execute(text("ALTER TABLE messages ADD COLUMN sort_index FLOAT"))
+            conn.execute(
+                text("UPDATE messages SET sort_index = id WHERE sort_index IS NULL")
+            )
         # Per-message OpenRouter metadata (reasoning effort, provider, usage).
         for col_name, col_type in (
             ("reasoning", "VARCHAR(32)"),

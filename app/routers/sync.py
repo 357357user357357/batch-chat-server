@@ -25,7 +25,13 @@ from sqlalchemy.orm import Session, selectinload
 
 from app.database import get_db
 from app.device import device_label
-from app.models import Conversation, Message, MessageTombstone, utcnow
+from app.models import (
+    Conversation,
+    Message,
+    MessageTombstone,
+    next_sort_index,
+    utcnow,
+)
 from app.schemas import (
     SyncConversationOut,
     SyncMessage,
@@ -269,6 +275,7 @@ def _upsert(
         kept_counter = Counter(
             (m.role, m.content) for m in conv.messages if m.deleted_at is None
         )
+        next_si = next_sort_index(db, conv.id)
         for msg in messages:
             role, content = msg["role"], msg["content"]
             if (role, content) in tombstones:
@@ -288,13 +295,15 @@ def _upsert(
                 tokens_completion=msg.get("tokens_completion"),
                 total_tokens=msg.get("total_tokens"),
                 cost=msg.get("cost"),
+                sort_index=next_si,
             ))
+            next_si += 1
         db.flush()
         return "updated"
 
     # Newly created dialog: add every pushed message (skipping tombstones —
     # a brand-new dialog can't match any, but stay defensive).
-    for msg in messages:
+    for position, msg in enumerate(messages, start=1):
         role, content = msg["role"], msg["content"]
         if (role, content) in tombstones:
             continue
@@ -310,6 +319,7 @@ def _upsert(
             tokens_completion=msg.get("tokens_completion"),
             total_tokens=msg.get("total_tokens"),
             cost=msg.get("cost"),
+            sort_index=float(position),
         ))
     return "created"
 

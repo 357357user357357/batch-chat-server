@@ -173,6 +173,43 @@ class ChatResponse(BaseModel):
     web_search_used: bool = False
 
 
+class RetryRequest(BaseModel):
+    """Re-answer one existing assistant reply with other model(s) (🔄 retry).
+
+    The server finds the question that came before the answer, rebuilds the
+    conversation context UP TO that question (the retried answer and anything
+    after it are excluded — exactly what the original model was shown), calls
+    every given model and stores the new answers right after the retried one
+    (older answers are kept, so you can compare models). The dialog can be
+    addressed either by its DB id (`conversation_id`, web UI) or by the sync
+    external_id (`external_id`, phone).
+    """
+
+    # One of the two dialog identifiers is required (validated in the router).
+    conversation_id: int | None = None
+    external_id: str | None = None
+    # Server id of the assistant message to retry (message "serverId" on the phone).
+    message_id: int
+    models: list[str] = Field(min_length=1, max_length=20)
+    system: str | None = None
+    temperature: float | None = None
+    max_tokens: int | None = None
+    reasoning_effort: str | None = Field(
+        default=None, pattern="^(none|low|medium|high|xhigh|max)$"
+    )
+    web_search: bool = False
+
+
+class RetryResponse(BaseModel):
+    conversation_id: int
+    external_id: str | None = None
+    # The assistant message that was retried.
+    source_message_id: int
+    # One entry per requested model, same shape as /api/chat/send responses
+    # (message_id filled for stored answers, ok=false + error for failures).
+    responses: list[ChatResponseItem]
+
+
 class ImportMessage(BaseModel):
     role: str = Field(pattern="^(user|assistant|system)$")
     content: str
