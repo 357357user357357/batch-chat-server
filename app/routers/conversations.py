@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import and_, func, select
 from sqlalchemy.orm import Session, selectinload
 
+from app.config import settings
 from app.database import get_db
 from app.device import device_label
 from app.models import AppSetting, Conversation, Message, MessageTombstone, next_sort_index, utcnow
@@ -266,7 +267,25 @@ def toggle_keepalive(
         db.add(row)
     row.value = json.dumps(sorted(set(ids)))
     db.commit()
-    return {"ok": True, "keepalive": conv.keepalive_enabled}
+
+    # Surface why warming can never start: the keeper refuses to record or
+    # ping when keep-alive is off globally or the cache TTL is below 1 hour
+    # (a 5-minute cache can't be kept warm by 45-minute pings). Tell the UI
+    # so the 🔥 Cache toggle never looks like a dead button.
+    warming_blocked = None
+    if payload.enabled and (
+        settings.cache_keepalive_hours <= 0 or settings.cache_duration_seconds < 3600
+    ):
+        warming_blocked = (
+            "Saved, but pings can't fire with the current Settings: "
+            "'Keep cache warm for' must be > 0 and 'Cache duration' must be "
+            "1 hour. Adjust both in ⚙ Settings (Prompt cache)."
+        )
+    return {
+        "ok": True,
+        "keepalive": conv.keepalive_enabled,
+        "warming_blocked": warming_blocked,
+    }
 
 
 @router.get("/keepalive/pings")

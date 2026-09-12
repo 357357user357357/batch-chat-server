@@ -64,15 +64,17 @@
       <header class="chat-header">
         <h3 id="chat-title">Select a conversation</h3>
         <div class="chat-header-controls">
-          <div class="mode-toggle" id="mode-toggle" title="Live: one model answers instantly. Flex: same, via the cheaper Flex tier (slower). Batch: every selected model answers in parallel.">
-            <button type="button" id="mode-live-btn" class="mode-btn" title="Live chat — one model answers right away">💬 Live</button>
-            <button type="button" id="mode-flex-btn" class="mode-btn" title="Flex chat — one model via the cheaper Flex processing tier (slower; auto-falls back to standard if unsupported)">🧊 Flex</button>
-            <button type="button" id="mode-batch-btn" class="mode-btn" title="Batch chat — all selected models answer in parallel">⚡ Batch</button>
-          </div>
+          <span class="header-menu" id="chat-mode-menu">
+            <button type="button" id="chat-mode-btn" class="mode-btn chat-mode-btn" title="Chat mode: Live = one model answers instantly · Flex = same via the cheaper Flex tier (slower) · Batch = every selected model answers in parallel. Click to pick the mode.">💬 Live ▾</button>
+            <span id="chat-mode-popover" class="menu-popover down hidden">
+              <button type="button" id="mode-live-btn" class="mode-btn" title="Live chat — one model answers right away">💬 Live — instant answer</button>
+              <button type="button" id="mode-flex-btn" class="mode-btn" title="Flex chat — one model via the cheaper Flex processing tier (slower; auto-falls back to standard if unsupported)">🧊 Flex — cheaper tier, slower</button>
+              <button type="button" id="mode-batch-btn" class="mode-btn" title="Batch chat — all selected models answer in parallel">⚡ Batch — all models in parallel</button>
+            </span>
+          </span>
           <button id="batch-btn" class="btn btn-ghost btn-small" title="Batch job statuses (async JSONL jobs, ~50% cost)">📊 Status<span id="batch-badge" class="batch-badge hidden" title="Active batch jobs"></span></button>
-          <button type="button" id="cache-btn" class="mode-btn" title="🔥 Cache keep-alive: warm the open dialog's prompt cache with near-empty pings every 45 min (window from Settings). Click to toggle.">🔥 Cache</button>
-          <button type="button" id="sync-btn" class="mode-btn" title="🔄 Sync now: refresh dialogs and the open conversation from the master database (same as the phone's Sync now)">🔄 Sync</button>
-          <select id="reasoning-select" class="reasoning-select" title="Reasoning effort (thinking budget) sent to the model via OpenRouter's unified reasoning parameter. Default = the model's own default.">
+          <button type="button" id="cache-btn" class="mode-btn hidden" title="🔥 Cache keep-alive: warm the open dialog's prompt cache with near-empty pings every 45 min (window from Settings). Click to toggle.">🔥 Cache</button>
+          <select id="reasoning-select" class="reasoning-select hidden" title="Reasoning effort (thinking budget) sent to the model via OpenRouter's unified reasoning parameter. Default = the model's own default.">
             <option value="">🧠 Default</option>
             <option value="none">🧠 None</option>
             <option value="low">🧠 Low</option>
@@ -85,6 +87,7 @@
           <button id="model-picker-btn" class="btn btn-ghost btn-small" title="Choose models">Models</button>
           <div id="model-dropdown" class="model-dropdown hidden">
             <p class="dropdown-hint" id="model-dropdown-hint">Answer with this model (Live):</p>
+            <input id="model-search-input" class="model-search" type="text" placeholder="Search models…" autocomplete="off" spellcheck="false" />
             <div id="model-checkboxes"></div>
             <label class="model-custom">
               Custom model:
@@ -189,10 +192,6 @@
         <h3>⚙ Provider API keys</h3>
         <button id="settings-close" class="btn btn-ghost btn-small">✕</button>
       </div>
-      <p class="modal-hint">
-        Saved on the server (SQLite) and applied immediately — no restart
-        needed. Leave a field blank to keep its current value.
-      </p>
 
       <p id="settings-identity" class="modal-hint" style="margin-top:8px;font-weight:600"></p>
 
@@ -218,7 +217,6 @@
       <div class="key-status-row">
         <span id="key-status-openrouter" class="key-status"></span>
         <span class="key-status-actions">
-          <button id="key-check-openrouter" class="btn btn-ghost btn-small" title="Validate the saved key against OpenRouter right now">🔍 Check</button>
           <button id="key-delete-openrouter" class="btn btn-ghost btn-small" title="Remove the saved key from the server">🗑 Delete key</button>
         </span>
       </div>
@@ -230,7 +228,6 @@
       <div class="key-status-row">
         <span id="key-status-tavily" class="key-status"></span>
         <span class="key-status-actions">
-          <button id="key-check-tavily" class="btn btn-ghost btn-small" title="Validate the saved key against Tavily right now">🔍 Check</button>
           <button id="key-delete-tavily" class="btn btn-ghost btn-small" title="Remove the saved key from the server">🗑 Delete key</button>
         </span>
       </div>
@@ -345,6 +342,7 @@
           file before shutting down this server, then restore it on the new
           one — no need to retype anything.
         </p>
+        <p class="untested-note">⚠️ Untested: this download → restore path hasn't been tried on a real server migration yet — check the keys on the new server after restoring.</p>
         <p id="settings-backup-status" class="import-status"></p>
         <div class="modal-actions">
           <button id="settings-backup-download" class="btn btn-ghost btn-small">⬇ Download backup</button>

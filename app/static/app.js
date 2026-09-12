@@ -21,6 +21,8 @@ const state = {
   sending: false,
   batches: [],
   batchRefreshTimer: null,
+  // Model-picker search filter ("" = show everything)
+  modelSearchQuery: "",
 };
 
 const els = {
@@ -50,9 +52,12 @@ const els = {
   webSearchToggle: $("#web-search-toggle"),
   modelPickerBtn: $("#model-picker-btn"),
   modelDropdownHint: $("#model-dropdown-hint"),
+  modelSearchInput: $("#model-search-input"),
   modeLiveBtn: $("#mode-live-btn"),
   modeFlexBtn: $("#mode-flex-btn"),
   modeBatchBtn: $("#mode-batch-btn"),
+  chatModeBtn: $("#chat-mode-btn"),
+  chatModePopover: $("#chat-mode-popover"),
   modelDropdown: $("#model-dropdown"),
   modelCheckboxes: $("#model-checkboxes"),
   customModelInput: $("#custom-model-input"),
@@ -68,7 +73,6 @@ const els = {
   batchBtn: $("#batch-btn"),
   batchBadge: $("#batch-badge"),
   cacheBtn: $("#cache-btn"),
-  syncBtn: $("#sync-btn"),
   reasoningSelect: $("#reasoning-select"),
   cachePings: $("#cache-pings"),
   batchModal: $("#batch-modal"),
@@ -119,10 +123,8 @@ const els = {
   settingsBackupRestoreBtn: $("#settings-backup-restore-btn"),
   settingsBackupFile: $("#settings-backup-file"),
   keyStatusOpenrouter: $("#key-status-openrouter"),
-  keyCheckOpenrouter: $("#key-check-openrouter"),
   keyDeleteOpenrouter: $("#key-delete-openrouter"),
   keyStatusTavily: $("#key-status-tavily"),
-  keyCheckTavily: $("#key-check-tavily"),
   keyDeleteTavily: $("#key-delete-tavily"),
   usageOpenLink: $("#usage-open-link"),
   usageBtn: $("#usage-btn"),
@@ -262,6 +264,7 @@ els.logoutBtn.addEventListener("click", () => {
 function showApp() {
   els.loginView.classList.add("hidden");
   els.appView.classList.remove("hidden");
+  updateHeaderControls(); // per-dialog controls start hidden (no dialog open)
   loadModels();
   loadConversations();
   checkHealth();
@@ -358,12 +361,16 @@ function saveModels() {
 // Live / Flex / Batch chat mode (mirrors the Android app's tabs;
 // Flex = live chat via the cheaper Flex processing tier)
 // ---------------------------------------------------------------
+const CHAT_MODE_LABELS = { live: "💬 Live", flex: "🧊 Flex", batch: "⚡ Batch" };
+
 function saveChatMode() {
   localStorage.setItem("bc_chat_mode", state.chatMode);
   localStorage.setItem("bc_live_model", state.liveModel || "");
 }
 
 function applyChatMode() {
+  // One combined button shows the current mode; the popover lists all three.
+  els.chatModeBtn.textContent = `${CHAT_MODE_LABELS[state.chatMode] || "💬 Live"} ▾`;
   els.modeLiveBtn.classList.toggle("active", state.chatMode === "live");
   els.modeFlexBtn.classList.toggle("active", state.chatMode === "flex");
   els.modeBatchBtn.classList.toggle("active", state.chatMode === "batch");
@@ -377,27 +384,34 @@ function applyChatMode() {
   renderModelCheckboxes();
 }
 
-els.modeLiveBtn.addEventListener("click", () => {
-  state.chatMode = "live";
-  saveChatMode();
-  applyChatMode();
+// The single mode button toggles the mode picker; clicking elsewhere closes it.
+els.chatModeBtn.addEventListener("click", (e) => {
+  e.stopPropagation();
+  els.chatModePopover.classList.toggle("hidden");
 });
+document.addEventListener("click", () => els.chatModePopover.classList.add("hidden"));
+els.chatModePopover.addEventListener("click", (e) => e.stopPropagation());
 
-els.modeFlexBtn.addEventListener("click", () => {
-  state.chatMode = "flex";
+function pickChatMode(mode) {
+  state.chatMode = mode;
   saveChatMode();
   applyChatMode();
-});
+  els.chatModePopover.classList.add("hidden");
+}
 
-els.modeBatchBtn.addEventListener("click", () => {
-  state.chatMode = "batch";
-  saveChatMode();
-  applyChatMode();
-});
+els.modeLiveBtn.addEventListener("click", () => pickChatMode("live"));
+
+els.modeFlexBtn.addEventListener("click", () => pickChatMode("flex"));
+
+els.modeBatchBtn.addEventListener("click", () => pickChatMode("batch"));
 
 function renderModelCheckboxes() {
   els.modelCheckboxes.innerHTML = "";
+  const query = (state.modelSearchQuery || "").trim().toLowerCase();
+  let shown = 0;
   state.defaultModels.forEach((model) => {
+    // Search filter: case-insensitive substring on the model id.
+    if (query && !model.toLowerCase().includes(query)) return;
     const label = document.createElement("label");
     label.className = "model-check";
     const cb = document.createElement("input");
@@ -428,8 +442,17 @@ function renderModelCheckboxes() {
       span.textContent = `· $${fmtPrice(price.prompt)} / $${fmtPrice(price.completion)} /1M`;
       label.append(span);
     }
+    shown++;
     els.modelCheckboxes.appendChild(label);
   });
+  if (!shown) {
+    const none = document.createElement("div");
+    none.className = "model-search-empty";
+    none.textContent = query
+      ? `No models match "${state.modelSearchQuery.trim()}" — add it below as a custom model.`
+      : "No models available.";
+    els.modelCheckboxes.appendChild(none);
+  }
 }
 
 // Mode-aware pricing: the server returns {live, flex, batch} per model —
@@ -462,7 +485,21 @@ function toggleModel(model, checked) {
 
 els.modelPickerBtn.addEventListener("click", (e) => {
   e.stopPropagation();
+  const opening = els.modelDropdown.classList.contains("hidden");
   els.modelDropdown.classList.toggle("hidden");
+  if (opening) {
+    // Fresh start every time the picker opens: clear any previous search.
+    state.modelSearchQuery = "";
+    els.modelSearchInput.value = "";
+    renderModelCheckboxes();
+    els.modelSearchInput.focus();
+  }
+});
+
+// Model search: re-render the list on every keystroke.
+els.modelSearchInput.addEventListener("input", () => {
+  state.modelSearchQuery = els.modelSearchInput.value;
+  renderModelCheckboxes();
 });
 
 document.addEventListener("click", () => els.modelDropdown.classList.add("hidden"));
@@ -480,6 +517,8 @@ els.addModelBtn.addEventListener("click", () => {
     saveModels();
   }
   els.customModelInput.value = "";
+  state.modelSearchQuery = "";
+  els.modelSearchInput.value = "";
   renderModelCheckboxes();
 });
 
@@ -579,6 +618,7 @@ async function deleteConversation(conv) {
     state.conversations = state.conversations.filter((c) => c.id !== conv.id);
     if (conv.id === state.currentConversationId) {
       state.currentConversationId = null;
+      updateHeaderControls();
       els.chatTitle.textContent = "Select or start a chat";
       els.messages.innerHTML = "";
     }
@@ -588,8 +628,17 @@ async function deleteConversation(conv) {
   }
 }
 
+/** 🧠 Reasoning + 🔥 Cache are per-dialog controls: only meaningful with an
+ * open dialog, so they stay hidden on the main (no dialog) screen. */
+function updateHeaderControls() {
+  const inDialog = state.currentConversationId !== null;
+  els.reasoningSelect.classList.toggle("hidden", !inDialog);
+  els.cacheBtn.classList.toggle("hidden", !inDialog);
+}
+
 async function openConversation(id) {
   state.currentConversationId = id;
+  updateHeaderControls();
   const conv = await api(`/api/conversations/${id}`);
   els.chatTitle.textContent = conv.title;
   els.cacheBtn.classList.toggle("active", !!conv.keepalive);
@@ -615,6 +664,7 @@ els.newChatBtn.addEventListener("click", async () => {
   els.chatTitle.textContent = conv.title;
   els.messages.innerHTML = "";
   state.currentConversationId = conv.id;
+  updateHeaderControls(); // new dialog: reasoning + cache controls appear
   els.cacheBtn.classList.remove("active"); // new dialog: warming starts OFF
   els.chatInput.focus();
 });
@@ -979,6 +1029,7 @@ async function retryMessage(msg, btn, node) {
       }
       renderConversationList();
     }
+    syncNow(); // retried answers also sync immediately
   } catch (err) {
     alert(`Retry failed: ${err.message}`);
   } finally {
@@ -1263,24 +1314,19 @@ els.reasoningSelect.addEventListener("change", () => {
   localStorage.setItem("bc_reasoning", els.reasoningSelect.value);
 });
 
-// 🔄 Sync now (web = the master server, so syncing means re-reading the
-// master DB): refresh the dialog list and the open conversation — the same
-// immediate effect as the phone's "Sync now" button.
-els.syncBtn.addEventListener("click", async () => {
-  els.syncBtn.classList.add("spinning");
-  els.syncBtn.disabled = true;
+// 🔄 Auto-sync (web = the master server, so syncing means re-reading the
+// master DB): refresh the dialog list and the open conversation. Runs
+// automatically after every sent/answered message — no button needed.
+async function syncNow() {
   try {
     await loadConversations();
     if (state.currentConversationId !== null) {
       await openConversation(state.currentConversationId);
     }
   } catch (err) {
-    alert(`Sync failed: ${err.message}`);
-  } finally {
-    els.syncBtn.classList.remove("spinning");
-    els.syncBtn.disabled = false;
+    console.warn("Auto-sync failed:", err.message);
   }
-});
+}
 
 // ---------------------------------------------------------------
 // 🔥 Cache keep-alive toggle (per open dialog, opt-in)
@@ -1301,6 +1347,11 @@ els.cacheBtn.addEventListener("click", async () => {
     els.cacheBtn.title = resp.keepalive
       ? "🔥 Cache keep-alive is ON for this dialog (pings every 45 min). Click to stop."
       : "🔥 Cache keep-alive is OFF. Click to warm this dialog's prompt cache every 45 min.";
+    if (resp.warming_blocked) {
+      // The toggle was saved, but Settings makes warming impossible — say so
+      // instead of silently doing nothing.
+      alert(resp.warming_blocked);
+    }
   } catch (err) {
     alert(`Cache toggle failed: ${err.message}`);
   } finally {
@@ -1376,7 +1427,7 @@ els.chatForm.addEventListener("submit", async (e) => {
       });
       else appendError(r.model, r.error);
     });
-    await loadConversations();
+    await syncNow(); // every message syncs immediately (dialog list + open conversation)
   } catch (err) {
     appendError(models.join(", "), err.message);
   } finally {
@@ -1837,9 +1888,7 @@ async function loadSettings() {
     els.ownerAccessBlock.classList.add("hidden");
   }
   // Client accounts manage only the two shared provider keys (see / hide the
-  // rest): no manual Check button, no infra/cache/backup sections.
-  els.keyCheckOpenrouter.classList.toggle("hidden", !settingsIsOwner);
-  els.keyCheckTavily.classList.toggle("hidden", !settingsIsOwner);
+  // rest): no infra/cache/backup sections.
   els.cacheSettingsBlock.classList.toggle("hidden", !settingsIsOwner);
   els.infraSettingsBlock.classList.toggle("hidden", !settingsIsOwner);
   els.backupBlock.classList.toggle("hidden", !settingsIsOwner);
@@ -1907,21 +1956,6 @@ function renderKeyStatus(el, status) {
     `${when ? ` (${when})` : ""}${status.stale ? " · stale" : ""}`;
 }
 
-async function checkKey(field, statusEl, btn) {
-  btn.disabled = true;
-  statusEl.className = "key-status";
-  statusEl.textContent = "Checking…";
-  try {
-    const res = await api(`/api/settings/keys/${field}/check`, { method: "POST" });
-    renderKeyStatus(statusEl, res);
-  } catch (err) {
-    statusEl.className = "key-status err";
-    statusEl.textContent = `Check failed: ${err.message}`;
-  } finally {
-    btn.disabled = false;
-  }
-}
-
 async function deleteKey(field, btn) {
   if (!confirm(`Delete the saved ${field === "tavily_api_key" ? "Tavily" : "OpenRouter"} key from the server?\n\nChatting (or web search) without it will fail until a new key is pasted.`)) {
     return;
@@ -1939,10 +1973,6 @@ async function deleteKey(field, btn) {
   }
 }
 
-els.keyCheckOpenrouter.addEventListener("click", () =>
-  checkKey("openrouter_api_key", els.keyStatusOpenrouter, els.keyCheckOpenrouter));
-els.keyCheckTavily.addEventListener("click", () =>
-  checkKey("tavily_api_key", els.keyStatusTavily, els.keyCheckTavily));
 els.keyDeleteOpenrouter.addEventListener("click", () =>
   deleteKey("openrouter_api_key", els.keyDeleteOpenrouter));
 els.keyDeleteTavily.addEventListener("click", () =>
