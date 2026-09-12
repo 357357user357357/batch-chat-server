@@ -243,63 +243,67 @@
         how much of your prompt traffic hits OpenRouter's cache.
       </p>
 
-      <p class="modal-hint" style="margin-top:8px">Prompt cache</p>
-      <label class="modal-field">
-        Cache duration
-        <select id="settings-cache-duration">
-          <option value="300">5 minutes</option>
-          <option value="3600">1 hour</option>
-        </select>
-      </label>
-      <p class="modal-hint">
-        How long reused prompt text stays cached for OpenRouter/Anthropic calls.
-      </p>
+      <div id="cache-settings-block">
+        <p class="modal-hint" style="margin-top:8px">Prompt cache</p>
+        <label class="modal-field">
+          Cache duration
+          <select id="settings-cache-duration">
+            <option value="300">5 minutes</option>
+            <option value="3600">1 hour</option>
+          </select>
+        </label>
+        <p class="modal-hint">
+          How long reused prompt text stays cached for OpenRouter/Anthropic calls.
+        </p>
 
-      <p class="modal-hint" style="margin-top:8px">Cache keep-alive</p>
-      <label class="modal-field">
-        Keep cache warm for
-        <select id="settings-keepalive">
-          <option value="0">Off (1 hour max)</option>
-          <option value="2">2 hours</option>
-          <option value="3">3 hours</option>
-          <option value="6">6 hours</option>
-          <option value="12">12 hours</option>
-          <option value="24">24 hours</option>
-        </select>
-      </label>
-      <p class="modal-hint">
-        After the last chat, near-empty pings (every 45 min) refresh the 1-hour
-        cache at ~10% of input cost, keeping replies cheap for longer.
-      </p>
+        <p class="modal-hint" style="margin-top:8px">Cache keep-alive</p>
+        <label class="modal-field">
+          Keep cache warm for
+          <select id="settings-keepalive">
+            <option value="0">Off (1 hour max)</option>
+            <option value="2">2 hours</option>
+            <option value="3">3 hours</option>
+            <option value="6">6 hours</option>
+            <option value="12">12 hours</option>
+            <option value="24">24 hours</option>
+          </select>
+        </label>
+        <p class="modal-hint">
+          After the last chat, near-empty pings (every 45 min) refresh the 1-hour
+          cache at ~10% of input cost, keeping replies cheap for longer.
+        </p>
+      </div>
 
-      <hr class="modal-divider" />
-      <p class="modal-hint" style="margin-top:8px">Google Vertex AI <em>(optional — not currently in use · ⚠️ untested)</em></p>
-      <label class="modal-field">
-        Project ID
-        <input id="settings-google-project" type="text" placeholder="my-gcp-project" autocomplete="off" />
-      </label>
-      <label class="modal-field">
-        Location
-        <input id="settings-google-location" type="text" placeholder="us-central1" autocomplete="off" />
-      </label>
-      <label class="modal-field">
-        Service-account JSON key <span id="settings-google-hint" class="settings-hint"></span>
-        <textarea id="settings-google-json" rows="4" spellcheck="false" placeholder='{"type": "service_account", ...}'></textarea>
-      </label>
+      <div id="infra-settings-block">
+        <hr class="modal-divider" />
+        <p class="modal-hint" style="margin-top:8px">Google Vertex AI <em>(optional — not currently in use · ⚠️ untested)</em></p>
+        <label class="modal-field">
+          Project ID
+          <input id="settings-google-project" type="text" placeholder="my-gcp-project" autocomplete="off" />
+        </label>
+        <label class="modal-field">
+          Location
+          <input id="settings-google-location" type="text" placeholder="us-central1" autocomplete="off" />
+        </label>
+        <label class="modal-field">
+          Service-account JSON key <span id="settings-google-hint" class="settings-hint"></span>
+          <textarea id="settings-google-json" rows="4" spellcheck="false" placeholder='{"type": "service_account", ...}'></textarea>
+        </label>
 
-      <p class="modal-hint" style="margin-top:8px">AWS Bedrock <em>(optional — not currently in use · ⚠️ untested)</em></p>
-      <label class="modal-field">
-        Access key ID <span id="settings-aws-key-hint" class="settings-hint"></span>
-        <input id="settings-aws-key" type="password" placeholder="AKIA…" autocomplete="off" />
-      </label>
-      <label class="modal-field">
-        Secret access key <span id="settings-aws-secret-hint" class="settings-hint"></span>
-        <input id="settings-aws-secret" type="password" placeholder="…" autocomplete="off" />
-      </label>
-      <label class="modal-field">
-        Region
-        <input id="settings-aws-region" type="text" placeholder="us-east-1" autocomplete="off" />
-      </label>
+        <p class="modal-hint" style="margin-top:8px">AWS Bedrock <em>(optional — not currently in use · ⚠️ untested)</em></p>
+        <label class="modal-field">
+          Access key ID <span id="settings-aws-key-hint" class="settings-hint"></span>
+          <input id="settings-aws-key" type="password" placeholder="AKIA…" autocomplete="off" />
+        </label>
+        <label class="modal-field">
+          Secret access key <span id="settings-aws-secret-hint" class="settings-hint"></span>
+          <input id="settings-aws-secret" type="password" placeholder="…" autocomplete="off" />
+        </label>
+        <label class="modal-field">
+          Region
+          <input id="settings-aws-region" type="text" placeholder="us-east-1" autocomplete="off" />
+        </label>
+      </div>
 
       <p id="settings-status" class="import-status"></p>
       <div class="modal-actions">
@@ -334,17 +338,19 @@
         <p id="account-danger-note" class="import-status"></p>
       </div>
 
-      <hr class="modal-divider" />
-      <p class="modal-hint">
-        <strong>Server migration.</strong> Download every key above as one
-        file before shutting down this server, then restore it on the new
-        one — no need to retype anything.
-      </p>
-      <p id="settings-backup-status" class="import-status"></p>
-      <div class="modal-actions">
-        <button id="settings-backup-download" class="btn btn-ghost btn-small">⬇ Download backup</button>
-        <button id="settings-backup-restore-btn" class="btn btn-ghost btn-small">⬆ Restore backup</button>
-        <input id="settings-backup-file" type="file" accept="application/json" class="hidden" />
+      <div id="backup-block">
+        <hr class="modal-divider" />
+        <p class="modal-hint">
+          <strong>Server migration.</strong> Download every key above as one
+          file before shutting down this server, then restore it on the new
+          one — no need to retype anything.
+        </p>
+        <p id="settings-backup-status" class="import-status"></p>
+        <div class="modal-actions">
+          <button id="settings-backup-download" class="btn btn-ghost btn-small">⬇ Download backup</button>
+          <button id="settings-backup-restore-btn" class="btn btn-ghost btn-small">⬆ Restore backup</button>
+          <input id="settings-backup-file" type="file" accept="application/json" class="hidden" />
+        </div>
       </div>
     </div>
   </div>

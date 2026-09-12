@@ -1111,11 +1111,26 @@ def test_settings_owner_only_and_backup():
     )
     assert created.status_code == 201
     bob = _pair_headers(created.json()["pair_code"])
-    # A secondary client account can never read or change provider keys.
-    assert client.get("/api/settings", headers=bob).status_code == 403
-    assert client.put("/api/settings", headers=bob, json={"openrouter_api_key": "x"}).status_code == 403
+    # A client account sees only the two shared provider keys (masked) and
+    # may replace/delete them; server infrastructure stays owner-only.
+    bob_view = client.get("/api/settings", headers=bob)
+    assert bob_view.status_code == 200
+    assert set(bob_view.json()) == {"openrouter_api_key", "tavily_api_key"}
+    assert client.put(
+        "/api/settings", headers=bob, json={"openrouter_api_key": "x"}
+    ).status_code == 200
+    assert client.put(
+        "/api/settings", headers=bob, json={"cache_duration_seconds": 300}
+    ).status_code == 403
+    assert client.delete(
+        "/api/settings/keys/openrouter_api_key", headers=bob
+    ).status_code == 200
     assert client.get("/api/settings/backup", headers=bob).status_code == 403
-    assert client.get("/api/settings", headers=owner).status_code == 200
+    # The owner's view stays complete (owner e-mail + cache tuning included).
+    owner_view = client.get("/api/settings", headers=owner)
+    assert owner_view.status_code == 200
+    assert "owner_email" in owner_view.json()
+    assert "cache_duration_seconds" in owner_view.json()
     # Wrong master password is rejected (and counted as a login failure).
     assert client.post(
         "/api/auth/accounts", json={"admin_password": "nope", "label": "x", "client_password": "x-pw-123"}

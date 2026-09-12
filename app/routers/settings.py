@@ -5,11 +5,13 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.schemas import OwnerEmailUpdate, SettingsBackup, SettingsUpdate
-from app.security import get_current_token, get_owner_account_id
+from app.security import get_account_id, get_owner_account_id
 
-# OWNER-ONLY router: every endpoint requires the instance owner account (the
-# first account). Secondary client accounts get 403 — they must never read
-# or change the server's provider credentials.
+# OWNER-ONLY router for the server infrastructure (Google/AWS/cache tuning,
+# backups, owner e-mail). The two provider keys are the exception: they are
+# the instance-wide chat/search credentials (synced with paired devices), so
+# every signed-in account may view their masked value + status, replace them
+# or delete them — that is the whole client-facing settings surface.
 from app.services.key_status import CHECKED_FIELDS, check_and_store, clear_status
 from app.services.settings_store import current_view, export_backup, import_backup, save_overrides
 
@@ -17,14 +19,30 @@ router = APIRouter(prefix="/api/settings", tags=["settings"])
 
 _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
+SHARED_KEY_FIELDS = ["openrouter_api_key", "tavily_api_key"]
+
+
+def _shared_view(db: Session) -> dict:
+    """Client-safe snapshot: just the two provider keys (masked + status)."""
+    view = current_view(db)
+    return {field: view[field] for field in CHECKED_FIELDS}
+
+
+def _is_owner(account_id: str, db: Session) -> bool:
+    from app.services.account import default_account_id
+
+    return account_id == default_account_id(db)
+
 
 @router.get("")
 def get_settings(
     db: Session = Depends(get_db),
-    _account_id: str = Depends(get_owner_account_id),
+    account_id: str = Depends(get_account_id),
 ) -> dict:
     """UI-safe snapshot of provider credentials (secrets masked, key status
-    included for OpenRouter/Tavily)."""
+    included for OpenRouter/Tavily). Clients get only the two shared keys."""
+    if not _is_owner(account_id, db):
+        return _shared_view(db)
     return current_view(db)
 
 
@@ -32,19 +50,28 @@ def get_settings(
 def update_settings(
     payload: SettingsUpdate,
     db: Session = Depends(get_db),
-    _account_id: str = Depends(get_owner_account_id),
+    account_id: str = Depends(get_account_id),
 ) -> dict:
     """Save provider credentials and apply them immediately (no restart).
 
     A newly pasted OpenRouter/Tavily key is validated against its provider
     right away, so the UI can show the verdict without a second click."""
+    owner = _is_owner(account_id, db)
     updates = payload.model_dump(exclude_unset=True, exclude_none=True)
+    if not owner:
+        if any(field not in CHECKED_FIELDS for field in updates):
+            raise HTTPException(
+                status_code=403,
+                detail="Owner account required",
+            )
+        if not updates:
+            return _shared_view(db)
     save_overrides(db, updates)
     checked: dict = {}
     for field in CHECKED_FIELDS:
         if field in updates:
             checked[field] = check_and_store(db, field)
-    view = current_view(db)
+    view = current_view(db) if owner else _shared_view(db)
     if checked:
         view["checked_keys"] = checked
     return view
@@ -66,13 +93,15 @@ def check_key(
 def delete_key(
     field: str,
     db: Session = Depends(get_db),
-    _account_id: str = Depends(get_owner_account_id),
+    account_id: str = Depends(get_account_id),
 ) -> dict:
     """Remove a saved key (and its stored status) from the server."""
     if field not in CHECKED_FIELDS:
         raise HTTPException(status_code=404, detail=f"'{field}' cannot be deleted here")
     save_overrides(db, {field: ""})
     clear_status(db, field)
+    if not _is_owner(account_id, db):
+        return _shared_view(db)
     return current_view(db)
 
 

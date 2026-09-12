@@ -344,6 +344,87 @@ def test_prompt_cache_stats_buckets_and_totals():
 
 
 # ---------------------------------------------------------------------------
+# Client accounts manage the two shared provider keys (and nothing else)
+# ---------------------------------------------------------------------------
+
+def _client_headers(label: str) -> dict:
+    created = client.post(
+        "/api/auth/accounts",
+        json={"admin_password": "test", "label": label, "client_password": "pw12345"},
+    )
+    assert created.status_code == 201, created.text
+    login_resp = client.post(
+        "/api/auth/login",
+        json={"login": created.json()["account_id"], "password": "pw12345"},
+    )
+    assert login_resp.status_code == 200, login_resp.text
+    return {"Authorization": f"Bearer {login_resp.json()['token']}"}
+
+
+def test_client_sees_shared_keys_masked_and_can_replace_them(saved_keys):
+    headers = auth_headers()
+    client.put("/api/settings", headers=headers, json={"openrouter_api_key": "sk-or-good"})
+
+    sub = _client_headers("key-client")
+
+    # Client view: only the two provider keys, masked (enough head to tell
+    # keys apart) and with the stored provider-check status.
+    view = client.get("/api/settings", headers=sub).json()
+    assert set(view) == {"openrouter_api_key", "tavily_api_key"}
+    assert view["openrouter_api_key"]["configured"] is True
+    assert view["openrouter_api_key"]["hint"].startswith("sk-o")
+    assert "…" in view["openrouter_api_key"]["hint"]
+    assert view["openrouter_api_key"]["status"]["status"] == "valid"
+
+    # Client replaces the key: paste + save is provider-checked like for the
+    # owner, and the response stays client-scoped.
+    resp = client.put(
+        "/api/settings", headers=sub, json={"openrouter_api_key": "sk-or-bad"},
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["checked_keys"]["openrouter_api_key"]["status"] == "invalid"
+    assert set(body) == {"openrouter_api_key", "tavily_api_key", "checked_keys"}
+
+    # Everything beyond the two keys stays owner-only.
+    assert client.put(
+        "/api/settings", headers=sub, json={"cache_duration_seconds": 3600},
+    ).status_code == 403
+    assert client.put(
+        "/api/settings", headers=sub, json={"google_project_id": "proj"},
+    ).status_code == 403
+    assert client.post(
+        "/api/settings/keys/openrouter_api_key/check", headers=sub,
+    ).status_code == 403
+
+    # Delete works for the client (step one of "replace with a new one").
+    resp = client.delete("/api/settings/keys/openrouter_api_key", headers=sub)
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["openrouter_api_key"]["configured"] is False
+    assert settings.openrouter_api_key == ""
+
+
+def test_client_masked_hint_tells_keys_apart(saved_keys):
+    """Two different OpenRouter keys produce different masks (the shared
+    'sk-or' prefix must not eat the whole head)."""
+    headers = auth_headers()
+    client.put(
+        "/api/settings", headers=headers,
+        json={"openrouter_api_key": "sk-or-v1-aaaaaaaaaaaaaaaaaaaa1111"},
+    )
+    first = client.get("/api/settings", headers=headers).json()
+    client.put(
+        "/api/settings", headers=headers,
+        json={"openrouter_api_key": "sk-or-v1-bbbbbbbbbbbbbbbbbbbb2222"},
+    )
+    second = client.get("/api/settings", headers=headers).json()
+    assert first["openrouter_api_key"]["hint"] == "sk-or-v1-aaa…1111"
+    assert second["openrouter_api_key"]["hint"] == "sk-or-v1-bbb…2222"
+    assert first["openrouter_api_key"]["hint"] != second["openrouter_api_key"]["hint"]
+    client.delete("/api/settings/keys/openrouter_api_key", headers=headers)
+
+
+# ---------------------------------------------------------------------------
 # Owner e-mail binding: e-mail login lands on the owner account
 # ---------------------------------------------------------------------------
 

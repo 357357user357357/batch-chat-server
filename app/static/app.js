@@ -103,6 +103,9 @@ const els = {
   ownerEmailSave: $("#owner-email-save"),
   settingsIdentity: $("#settings-identity"),
   ownerAccessBlock: $("#owner-access-block"),
+  cacheSettingsBlock: $("#cache-settings-block"),
+  infraSettingsBlock: $("#infra-settings-block"),
+  backupBlock: $("#backup-block"),
   settingsBackupStatus: $("#settings-backup-status"),
   accountStatus: $("#account-status"),
   accountReveal: $("#account-reveal"),
@@ -1817,18 +1820,29 @@ els.settingsModal.addEventListener("click", (e) => {
   if (e.target === els.settingsModal) closeSettings();
 });
 
+let settingsIsOwner = false;
+
 async function loadSettings() {
   try {
     const me = await api("/api/auth/me");
+    settingsIsOwner = !!me.is_owner;
     const who = me.email || me.label || me.account_id;
     els.settingsIdentity.textContent = me.is_owner
       ? `Signed in as: ${who} — owner account`
       : `Signed in as: ${who}`;
     els.ownerAccessBlock.classList.toggle("hidden", !me.is_owner);
   } catch {
+    settingsIsOwner = false;
     els.settingsIdentity.textContent = "";
     els.ownerAccessBlock.classList.add("hidden");
   }
+  // Client accounts manage only the two shared provider keys (see / hide the
+  // rest): no manual Check button, no infra/cache/backup sections.
+  els.keyCheckOpenrouter.classList.toggle("hidden", !settingsIsOwner);
+  els.keyCheckTavily.classList.toggle("hidden", !settingsIsOwner);
+  els.cacheSettingsBlock.classList.toggle("hidden", !settingsIsOwner);
+  els.infraSettingsBlock.classList.toggle("hidden", !settingsIsOwner);
+  els.backupBlock.classList.toggle("hidden", !settingsIsOwner);
   try {
     const data = await api("/api/settings");
     els.settingsOpenrouterHint.textContent = data.openrouter_api_key.configured
@@ -1837,25 +1851,27 @@ async function loadSettings() {
       ? `(saved: ${data.tavily_api_key.hint})` : "(not set)";
     renderKeyStatus(els.keyStatusOpenrouter, data.openrouter_api_key.status);
     renderKeyStatus(els.keyStatusTavily, data.tavily_api_key.status);
-    const cacheSeconds = data.cache_duration_seconds && data.cache_duration_seconds.value;
-    if (cacheSeconds) els.settingsCacheDuration.value = String(cacheSeconds);
-    const keepaliveHours = data.cache_keepalive_hours && data.cache_keepalive_hours.value;
-    if (keepaliveHours !== undefined && keepaliveHours !== null) {
-      els.settingsKeepalive.value = String(keepaliveHours);
-    }
-    els.settingsGoogleHint.textContent = data.google_service_account_json.configured
-      ? `(saved: ${data.google_service_account_json.hint})` : "(not set)";
-    els.settingsAwsKeyHint.textContent = data.aws_access_key_id.configured
-      ? `(saved: ${data.aws_access_key_id.hint})` : "(not set)";
-    els.settingsAwsSecretHint.textContent = data.aws_secret_access_key.configured
-      ? `(saved: ${data.aws_secret_access_key.hint})` : "(not set)";
-    els.settingsGoogleProject.value = data.google_project_id.value || "";
-    els.settingsGoogleLocation.value = data.google_location.value || "";
-    els.settingsAwsRegion.value = data.aws_region.value || "";
-    if (data.owner_email !== undefined) {
-      els.settingsOwnerEmail.value = data.owner_email || "";
-      els.settingsOwnerEmail.placeholder = data.owner_email
-        ? data.owner_email : "you@example.com";
+    if (settingsIsOwner) {
+      const cacheSeconds = data.cache_duration_seconds && data.cache_duration_seconds.value;
+      if (cacheSeconds) els.settingsCacheDuration.value = String(cacheSeconds);
+      const keepaliveHours = data.cache_keepalive_hours && data.cache_keepalive_hours.value;
+      if (keepaliveHours !== undefined && keepaliveHours !== null) {
+        els.settingsKeepalive.value = String(keepaliveHours);
+      }
+      els.settingsGoogleHint.textContent = data.google_service_account_json.configured
+        ? `(saved: ${data.google_service_account_json.hint})` : "(not set)";
+      els.settingsAwsKeyHint.textContent = data.aws_access_key_id.configured
+        ? `(saved: ${data.aws_access_key_id.hint})` : "(not set)";
+      els.settingsAwsSecretHint.textContent = data.aws_secret_access_key.configured
+        ? `(saved: ${data.aws_secret_access_key.hint})` : "(not set)";
+      els.settingsGoogleProject.value = data.google_project_id.value || "";
+      els.settingsGoogleLocation.value = data.google_location.value || "";
+      els.settingsAwsRegion.value = data.aws_region.value || "";
+      if (data.owner_email !== undefined) {
+        els.settingsOwnerEmail.value = data.owner_email || "";
+        els.settingsOwnerEmail.placeholder = data.owner_email
+          ? data.owner_email : "you@example.com";
+      }
     }
   } catch (err) {
     els.settingsStatus.classList.add("err");
@@ -1963,19 +1979,21 @@ els.settingsSubmit.addEventListener("click", async () => {
   };
   maybeAdd("openrouter_api_key", els.settingsOpenrouterKey.value);
   maybeAdd("tavily_api_key", els.settingsTavilyKey.value);
-  maybeAdd("google_project_id", els.settingsGoogleProject.value);
-  maybeAdd("google_location", els.settingsGoogleLocation.value);
-  maybeAdd("google_service_account_json", els.settingsGoogleJson.value);
-  maybeAdd("aws_access_key_id", els.settingsAwsKey.value);
-  maybeAdd("aws_secret_access_key", els.settingsAwsSecret.value);
-  maybeAdd("aws_region", els.settingsAwsRegion.value);
-  const cacheSeconds = parseInt(els.settingsCacheDuration.value, 10);
-  if (cacheSeconds === 300 || cacheSeconds === 3600) {
-    body.cache_duration_seconds = cacheSeconds;
-  }
-  const keepaliveHours = parseInt(els.settingsKeepalive.value, 10);
-  if (!Number.isNaN(keepaliveHours) && keepaliveHours >= 0) {
-    body.cache_keepalive_hours = keepaliveHours; // 0 = off — must be savable too
+  if (settingsIsOwner) {
+    maybeAdd("google_project_id", els.settingsGoogleProject.value);
+    maybeAdd("google_location", els.settingsGoogleLocation.value);
+    maybeAdd("google_service_account_json", els.settingsGoogleJson.value);
+    maybeAdd("aws_access_key_id", els.settingsAwsKey.value);
+    maybeAdd("aws_secret_access_key", els.settingsAwsSecret.value);
+    maybeAdd("aws_region", els.settingsAwsRegion.value);
+    const cacheSeconds = parseInt(els.settingsCacheDuration.value, 10);
+    if (cacheSeconds === 300 || cacheSeconds === 3600) {
+      body.cache_duration_seconds = cacheSeconds;
+    }
+    const keepaliveHours = parseInt(els.settingsKeepalive.value, 10);
+    if (!Number.isNaN(keepaliveHours) && keepaliveHours >= 0) {
+      body.cache_keepalive_hours = keepaliveHours; // 0 = off — must be savable too
+    }
   }
 
   els.settingsSubmit.disabled = true;

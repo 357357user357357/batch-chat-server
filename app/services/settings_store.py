@@ -72,7 +72,10 @@ def _mask(value: str) -> str:
         return ""
     if len(value) <= 8:
         return "•" * len(value)
-    return f"{value[:4]}…{value[-4:]}"
+    # Long keys (sk-or-v1-…/tvly-…): keep enough of the head to tell keys
+    # apart — they all share the same short prefix ("sk-o" fits any key).
+    head = 12 if len(value) > 20 else 4
+    return f"{value[:head]}…{value[-4:]}"
 
 
 def current_view(db: Session | None = None) -> dict:
