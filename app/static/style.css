@@ -277,21 +277,6 @@ input:focus, textarea:focus { outline: 2px solid var(--accent); outline-offset: 
 
 .menu-popover .btn { text-align: left; white-space: nowrap; }
 
-.batch-badge {
-  display: inline-block;
-  min-width: 16px;
-  margin-left: 5px;
-  padding: 0 5px;
-  border-radius: 9px;
-  background: #3a2f66;
-  border: 1px solid #4a3d80;
-  color: #c9b8ff;
-  font-size: 10px;
-  line-height: 15px;
-  text-align: center;
-  vertical-align: 1px;
-}
-
 @media (max-width: 720px) {
   .chat-header { flex-wrap: wrap; gap: 8px; }
 }
@@ -660,41 +645,6 @@ input:focus, textarea:focus { outline: 2px solid var(--accent); outline-offset: 
 }
 .settings-hint { font-weight: 400; color: var(--text-muted); font-size: 11px; }
 
-
-.batch-jobs { margin-top: 8px; display: flex; flex-direction: column; gap: 6px; }
-.batch-job-row {
-  font-size: 12px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 6px 10px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-}
-.batch-job-status { font-weight: 700; text-transform: uppercase; }
-.batch-job-status.completed { color: var(--success); }
-.batch-job-status.error, .batch-job-status.failed { color: var(--error); }
-.batch-job-status.pending { color: var(--accent-hover); }
-.batch-job-error {
-  flex-basis: 100%;
-  color: var(--error);
-  font-size: 11px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.batch-clear {
-  background: none;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  color: var(--text-muted);
-  cursor: pointer;
-  font-size: 11px;
-  line-height: 1;
-  padding: 3px 6px;
-}
-.batch-clear:hover { color: var(--error); border-color: var(--error); }
 .reasoning-select {
   background: var(--bg-elevated, #1c1c22);
   border: 1px solid var(--border);
@@ -703,21 +653,6 @@ input:focus, textarea:focus { outline: 2px solid var(--accent); outline-offset: 
   font-size: 12px;
   padding: 4px 6px;
 }
-
-.cache-pings-wrap { margin-top: 14px; border-top: 1px solid var(--border); padding-top: 10px; }
-.cache-pings-title { margin: 0 0 4px; font-size: 13px; }
-.cache-pings-hint { margin: 0 0 8px; font-size: 11px; color: var(--text-muted); }
-.cache-pings { display: flex; flex-direction: column; gap: 4px; max-height: 180px; overflow-y: auto; }
-.cache-ping-row {
-  display: flex; align-items: baseline; gap: 8px;
-  font-size: 12px; flex-wrap: wrap;
-}
-.cache-ping-mark { font-weight: 700; }
-.cache-ping-mark.ok { color: var(--success); }
-.cache-ping-mark.fail { color: var(--error); }
-.cache-ping-error { flex-basis: 100%; color: var(--error); font-size: 11px; }
-.cache-ping-empty { font-size: 12px; color: var(--text-muted); }
-.cache-ping-enabled { font-size: 11px; color: var(--text-muted); margin-bottom: 4px; }
 
 /* --- API key status chips (Settings modal) --- */
 .key-status-row {

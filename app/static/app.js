@@ -19,8 +19,6 @@ const state = {
     : "live",
   liveModel: localStorage.getItem("bc_live_model") || null,
   sending: false,
-  batches: [],
-  batchRefreshTimer: null,
   // Model-picker search filter ("" = show everything)
   modelSearchQuery: "",
 };
@@ -70,19 +68,8 @@ const els = {
   importTextarea: $("#import-textarea"),
   importStatus: $("#import-status"),
   importSubmit: $("#import-submit"),
-  batchBtn: $("#batch-btn"),
-  batchBadge: $("#batch-badge"),
   cacheBtn: $("#cache-btn"),
   reasoningSelect: $("#reasoning-select"),
-  cachePings: $("#cache-pings"),
-  batchModal: $("#batch-modal"),
-  batchClose: $("#batch-close"),
-  batchModel: $("#batch-model"),
-  batchSystem: $("#batch-system"),
-  batchJsonl: $("#batch-jsonl"),
-  batchStatus: $("#batch-status"),
-  batchSubmit: $("#batch-submit"),
-  batchJobs: $("#batch-jobs"),
   settingsBtn: $("#settings-btn"),
   settingsModal: $("#settings-modal"),
   settingsClose: $("#settings-close"),
@@ -268,11 +255,6 @@ function showApp() {
   loadModels();
   loadConversations();
   checkHealth();
-  loadBatches().catch(() => {});
-  // Keep the 🧾 JSONL badge fresh even with no jobs in flight.
-  if (!state.batchBadgeTimer) {
-    state.batchBadgeTimer = setInterval(() => loadBatches().catch(() => {}), 60000);
-  }
 }
 
 function showLogin() {
@@ -1546,208 +1528,6 @@ els.importSubmit.addEventListener("click", async () => {
     els.importStatus.textContent = `Import failed: ${err.message}`;
   } finally {
     els.importSubmit.disabled = false;
-  }
-});
-
-// ---------------------------------------------------------------
-// JSONL batch (like GCP Vertex AI / AWS Bedrock, via OpenRouter)
-// ---------------------------------------------------------------
-function openBatch() {
-  els.batchStatus.className = "import-status";
-  els.batchStatus.textContent = "";
-  els.batchModal.classList.remove("hidden");
-  loadBatches();
-  renderCachePings();
-}
-
-/** 🔥 Cache keep-alive verification feed (inside the 📊 Status modal). */
-async function renderCachePings() {
-  const box = els.cachePings;
-  if (!box) return;
-  box.textContent = "Loading…";
-  try {
-    const data = await api("/api/conversations/keepalive/pings");
-    box.innerHTML = "";
-    const enabled = data.enabled || [];
-    const pings = (data.pings || []).slice().reverse(); // newest first
-    if (enabled.length) {
-      const line = document.createElement("div");
-      line.className = "cache-ping-enabled";
-      line.textContent = `Warming ${enabled.length} dialog(s): ` +
-        enabled.map((e) => `#${e.conversation_id} ${e.title}`).join(", ");
-      box.appendChild(line);
-    }
-    if (!pings.length) {
-      const empty = document.createElement("div");
-      empty.className = "cache-ping-empty";
-      empty.textContent = enabled.length
-        ? `No pings sent yet — the first one fires ≤${data.interval_minutes} min after the dialog's last answer.`
-        : "No dialogs warming. Open a dialog and press 🔥 Cache to start.";
-      box.appendChild(empty);
-      return;
-    }
-    for (const p of pings) {
-      const row = document.createElement("div");
-      row.className = "cache-ping-row";
-      const when = new Date(p.ts * 1000).toLocaleTimeString();
-      const mark = document.createElement("span");
-      mark.className = `cache-ping-mark ${p.ok ? "ok" : "fail"}`;
-      mark.textContent = p.ok ? "✓" : "✗";
-      const label = document.createElement("span");
-      label.textContent = `${when} · ${p.title} · ${p.model}`;
-      label.title = `${p.title} · ${p.model}`;
-      row.append(mark, label);
-      if (!p.ok) {
-        const err = document.createElement("div");
-        err.className = "cache-ping-error";
-        err.textContent = p.error || "failed";
-        row.appendChild(err);
-      }
-      box.appendChild(row);
-    }
-  } catch (err) {
-    box.textContent = `Could not load ping log: ${err.message}`;
-  }
-}
-
-function closeBatch() {
-  els.batchModal.classList.add("hidden");
-  if (state.batchRefreshTimer) {
-    clearInterval(state.batchRefreshTimer);
-    state.batchRefreshTimer = null;
-  }
-}
-
-els.batchBtn.addEventListener("click", openBatch);
-els.batchClose.addEventListener("click", closeBatch);
-els.batchModal.addEventListener("click", (e) => {
-  if (e.target === els.batchModal) closeBatch();
-});
-
-async function loadBatches() {
-  try {
-    state.batches = await api("/api/batches");
-  } catch (err) {
-    state.batches = [];
-  }
-  renderBatchJobs();
-  const isActive = (b) =>
-    b.status !== "completed" && b.status !== "failed" &&
-    b.status !== "expired" && b.status !== "cancelled" && b.status !== "error";
-  updateBatchBadge(state.batches.filter(isActive).length);
-  const active = state.batches.some(isActive);
-  if (active) {
-    // Keep refreshing while jobs are in flight, and pull in new conversations.
-    if (!state.batchRefreshTimer) {
-      state.batchRefreshTimer = setInterval(() => {
-        loadBatches();
-        loadConversations().catch(() => {});
-      }, 8000);
-    }
-  } else if (state.batchRefreshTimer) {
-    clearInterval(state.batchRefreshTimer);
-    state.batchRefreshTimer = null;
-  }
-}
-
-/** Small counter on the 🧾 JSONL button showing in-flight batch jobs. */
-function updateBatchBadge(count) {
-  if (!els.batchBadge) return;
-  if (count > 0) {
-    els.batchBadge.textContent = String(count);
-    els.batchBadge.classList.remove("hidden");
-  } else {
-    els.batchBadge.classList.add("hidden");
-  }
-}
-
-function renderBatchJobs() {
-  els.batchJobs.innerHTML = "";
-  if (!state.batches.length) {
-    els.batchJobs.textContent = "No batch jobs yet.";
-    return;
-  }
-  // Terminal (dead) jobs can be cleared from the list; live ones cannot.
-  const isDead = (s) =>
-    s === "failed" || s === "expired" || s === "cancelled" || s === "error";
-  state.batches.slice(0, 6).forEach((job) => {
-    const row = document.createElement("div");
-    row.className = "batch-job-row";
-    const status = document.createElement("span");
-    status.className = `batch-job-status ${job.status}`;
-    status.textContent = job.status;
-    const label = document.createElement("span");
-    label.textContent = `#${job.id} · ${job.title} · ${job.completed_items}/${job.total_items}`;
-    row.append(label, status);
-    if (job.error) {
-      // Show WHY a job failed (e.g. missing API key, provider rejection).
-      const errLine = document.createElement("div");
-      errLine.className = "batch-job-error";
-      errLine.textContent = job.error;
-      errLine.title = job.error;
-      row.appendChild(errLine);
-    }
-    if (job.conversation_id) {
-      row.addEventListener("click", () => {
-        openConversation(job.conversation_id);
-        closeBatch();
-      });
-      row.style.cursor = "pointer";
-      row.title = "Open the resulting conversation";
-    }
-    if (isDead(job.status)) {
-      const clear = document.createElement("button");
-      clear.className = "batch-clear";
-      clear.textContent = "✕";
-      clear.title = "Clear this finished/failed job from the list";
-      clear.addEventListener("click", async (e) => {
-        e.stopPropagation();
-        if (!confirm(`Clear batch job #${job.id} from the list?`)) return;
-        try {
-          await api(`/api/batches/${job.id}`, { method: "DELETE" });
-          state.batches = state.batches.filter((b) => b.id !== job.id);
-          renderBatchJobs();
-          loadBatches().catch(() => {});
-        } catch (err) {
-          alert(`Could not clear job: ${err.message}`);
-        }
-      });
-      row.appendChild(clear);
-    }
-    els.batchJobs.appendChild(row);
-  });
-}
-
-els.batchSubmit.addEventListener("click", async () => {
-  const jsonl = els.batchJsonl.value.trim();
-  if (!jsonl) return;
-  els.batchSubmit.disabled = true;
-  els.batchStatus.className = "import-status";
-  els.batchStatus.classList.remove("ok", "err");
-  els.batchStatus.textContent = "Submitting…";
-
-  try {
-    const body = { jsonl };
-    const model = els.batchModel.value.trim();
-    if (model) body.model = model;
-    const system = els.batchSystem.value.trim();
-    if (system) body.system = system;
-    const job = await api("/api/batches", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
-    els.batchStatus.classList.add("ok");
-    els.batchStatus.textContent =
-      `Batch #${job.id} submitted (${job.total_items} requests, status: ${job.status}). ` +
-      `Answers will appear as a new conversation.`;
-    els.batchJsonl.value = "";
-    loadBatches();
-  } catch (err) {
-    els.batchStatus.classList.add("err");
-    els.batchStatus.textContent = `Submit failed: ${err.message}`;
-  } finally {
-    els.batchSubmit.disabled = false;
   }
 });
 
