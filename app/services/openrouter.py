@@ -82,8 +82,10 @@ def fetch_model_catalog() -> list[dict]:
             continue
         raw = entry.get("pricing") or {}
         try:
-            prompt = float(raw.get("prompt") or 0)
-            completion = float(raw.get("completion") or 0)
+            # Negative values are catalog placeholders (e.g. openrouter/auto
+            # at -1) — clamp to 0 so sorting/display never go insane.
+            prompt = max(0.0, float(raw.get("prompt") or 0))
+            completion = max(0.0, float(raw.get("completion") or 0))
         except (TypeError, ValueError):
             continue
         catalog.append(
