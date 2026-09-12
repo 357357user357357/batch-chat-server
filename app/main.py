@@ -15,7 +15,7 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(levelname)s:%(name)s:%(message)s",
 )
-from app.routers import auth, batches, chat, conversations, import_conversations, settings as settings_router, sync
+from app.routers import auth, batches, chat, conversations, import_conversations, settings as settings_router, stats, sync
 from app.services import cache_keeper
 from app.services.batch_worker import start_batch_worker
 from app.services.cache_keeper import start_cache_keeper
@@ -71,6 +71,7 @@ def _run_migrations() -> None:
             ("provider", "VARCHAR(128)"),
             ("gen_id", "VARCHAR(128)"),
             ("tokens_prompt", "INTEGER"),
+            ("tokens_cached", "INTEGER"),
             ("tokens_completion", "INTEGER"),
             ("total_tokens", "INTEGER"),
             ("cost", "FLOAT"),
@@ -168,6 +169,7 @@ app.include_router(chat.router)
 app.include_router(import_conversations.router)
 app.include_router(batches.router)
 app.include_router(settings_router.router)
+app.include_router(stats.router)
 app.include_router(sync.router)
 
 start_batch_worker()

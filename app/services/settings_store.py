@@ -75,12 +75,20 @@ def _mask(value: str) -> str:
     return f"{value[:4]}…{value[-4:]}"
 
 
-def current_view() -> dict:
-    """UI-safe snapshot: secrets are masked, plain fields shown as-is."""
+def current_view(db: Session | None = None) -> dict:
+    """UI-safe snapshot: secrets are masked, plain fields shown as-is.
+
+    With a db session, the OpenRouter/Tavily entries also carry their stored
+    provider-check `status` (from app/services/key_status.py)."""
+    from app.services.key_status import CHECKED_FIELDS, get_status
+
     view: dict = {}
     for field in SECRET_FIELDS:
         value = getattr(settings, field, "") or ""
-        view[field] = {"configured": bool(value), "hint": _mask(value)}
+        entry: dict = {"configured": bool(value), "hint": _mask(value)}
+        if field in CHECKED_FIELDS and db is not None:
+            entry["status"] = get_status(db, field)
+        view[field] = entry
     for field in PLAIN_FIELDS:
         view[field] = {"configured": bool(getattr(settings, field, "")), "value": getattr(settings, field, "")}
     return view

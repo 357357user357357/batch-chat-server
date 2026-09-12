@@ -153,6 +153,7 @@ def _store_conversation(
                 provider=msg.get("provider"),
                 gen_id=msg.get("gen_id"),
                 tokens_prompt=msg.get("tokens_prompt"),
+                tokens_cached=msg.get("tokens_cached"),
                 tokens_completion=msg.get("tokens_completion"),
                 total_tokens=msg.get("total_tokens"),
                 cost=msg.get("cost"),

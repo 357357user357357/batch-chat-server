@@ -52,6 +52,7 @@
             <span id="menu-popover" class="menu-popover hidden">
               <button id="import-btn" class="btn btn-ghost btn-small" title="Import from the Android app">⬆ Import</button>
               <button id="settings-btn" class="btn btn-ghost btn-small" title="Set provider API keys">⚙ Settings</button>
+              <button id="usage-btn" class="btn btn-ghost btn-small" title="Prompt token caching — daily cached vs uncached tokens">📈 Prompt cache</button>
               <button id="logout-btn" class="btn btn-ghost btn-small">⎋ Log out</button>
             </span>
           </span>
@@ -197,13 +198,32 @@
         OpenRouter API key <span id="settings-openrouter-hint" class="settings-hint"></span>
         <input id="settings-openrouter-key" type="password" placeholder="sk-or-v1-…" autocomplete="off" />
       </label>
+      <div class="key-status-row">
+        <span id="key-status-openrouter" class="key-status"></span>
+        <span class="key-status-actions">
+          <button id="key-check-openrouter" class="btn btn-ghost btn-small" title="Validate the saved key against OpenRouter right now">🔍 Check</button>
+          <button id="key-delete-openrouter" class="btn btn-ghost btn-small" title="Remove the saved key from the server">🗑 Delete key</button>
+        </span>
+      </div>
 
       <label class="modal-field">
         Tavily API key <span id="settings-tavily-hint" class="settings-hint"></span>
         <input id="settings-tavily-key" type="password" placeholder="tvly-…" autocomplete="off" />
       </label>
+      <div class="key-status-row">
+        <span id="key-status-tavily" class="key-status"></span>
+        <span class="key-status-actions">
+          <button id="key-check-tavily" class="btn btn-ghost btn-small" title="Validate the saved key against Tavily right now">🔍 Check</button>
+          <button id="key-delete-tavily" class="btn btn-ghost btn-small" title="Remove the saved key from the server">🗑 Delete key</button>
+        </span>
+      </div>
       <p class="modal-hint">
         Enables the "Web search" toggle in the chat (internet lookups).
+      </p>
+
+      <p class="modal-hint" style="margin-top:8px">
+        <a href="#" id="usage-open-link">📈 Prompt token caching usage</a> — see
+        how much of your prompt traffic hits OpenRouter's cache.
       </p>
 
       <p class="modal-hint" style="margin-top:8px">Prompt cache</p>
@@ -308,6 +328,36 @@
         <button id="settings-backup-download" class="btn btn-ghost btn-small">⬇ Download backup</button>
         <button id="settings-backup-restore-btn" class="btn btn-ghost btn-small">⬆ Restore backup</button>
         <input id="settings-backup-file" type="file" accept="application/json" class="hidden" />
+      </div>
+    </div>
+  </div>
+
+  <!-- Prompt token caching usage modal -->
+  <div id="usage-modal" class="modal-overlay hidden">
+    <div class="modal">
+      <div class="modal-header">
+        <h3>📈 Prompt token caching</h3>
+        <button id="usage-close" class="btn btn-ghost btn-small">✕</button>
+      </div>
+      <p class="modal-hint">
+        Daily prompt tokens, split into cached (served from OpenRouter's prompt
+        cache at the discounted rate) and uncached. The owner sees the whole
+        server; client accounts see their own messages.
+      </p>
+      <div id="usage-summary" class="usage-summary"></div>
+      <div id="usage-chart" class="usage-chart"></div>
+      <div class="usage-legend">
+        <span><i class="legend-swatch uncached"></i>Uncached</span>
+        <span><i class="legend-swatch cached"></i>Cached</span>
+      </div>
+      <p id="usage-status" class="import-status"></p>
+      <div class="modal-actions">
+        <select id="usage-range" class="usage-range" title="Time range">
+          <option value="7">Last 7 days</option>
+          <option value="30" selected>Last 30 days</option>
+          <option value="90">Last 90 days</option>
+        </select>
+        <button id="usage-refresh" class="btn btn-ghost btn-small">🔄 Refresh</button>
       </div>
     </div>
   </div>

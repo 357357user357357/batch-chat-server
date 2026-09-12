@@ -111,6 +111,21 @@ const els = {
   settingsBackupDownload: $("#settings-backup-download"),
   settingsBackupRestoreBtn: $("#settings-backup-restore-btn"),
   settingsBackupFile: $("#settings-backup-file"),
+  keyStatusOpenrouter: $("#key-status-openrouter"),
+  keyCheckOpenrouter: $("#key-check-openrouter"),
+  keyDeleteOpenrouter: $("#key-delete-openrouter"),
+  keyStatusTavily: $("#key-status-tavily"),
+  keyCheckTavily: $("#key-check-tavily"),
+  keyDeleteTavily: $("#key-delete-tavily"),
+  usageOpenLink: $("#usage-open-link"),
+  usageBtn: $("#usage-btn"),
+  usageModal: $("#usage-modal"),
+  usageClose: $("#usage-close"),
+  usageSummary: $("#usage-summary"),
+  usageChart: $("#usage-chart"),
+  usageStatus: $("#usage-status"),
+  usageRange: $("#usage-range"),
+  usageRefresh: $("#usage-refresh"),
   metaModal: $("#meta-modal"),
   metaClose: $("#meta-close"),
   metaBody: $("#meta-body"),
@@ -1805,6 +1820,8 @@ async function loadSettings() {
       ? `(saved: ${data.openrouter_api_key.hint})` : "(not set)";
     els.settingsTavilyHint.textContent = data.tavily_api_key.configured
       ? `(saved: ${data.tavily_api_key.hint})` : "(not set)";
+    renderKeyStatus(els.keyStatusOpenrouter, data.openrouter_api_key.status);
+    renderKeyStatus(els.keyStatusTavily, data.tavily_api_key.status);
     const cacheSeconds = data.cache_duration_seconds && data.cache_duration_seconds.value;
     if (cacheSeconds) els.settingsCacheDuration.value = String(cacheSeconds);
     const keepaliveHours = data.cache_keepalive_hours && data.cache_keepalive_hours.value;
@@ -1825,6 +1842,71 @@ async function loadSettings() {
     els.settingsStatus.textContent = `Failed to load: ${err.message}`;
   }
 }
+
+function renderKeyStatus(el, status) {
+  el.textContent = "";
+  if (!status) return;
+  const labels = {
+    valid: "✓ valid",
+    invalid: "✕ invalid",
+    error: "⚠ check failed",
+    not_set: "— no key saved",
+  };
+  const className = {
+    valid: "ok",
+    invalid: "err",
+    error: "err",
+    not_set: "",
+  }[status.status] || "";
+  el.className = `key-status ${className}`.trim();
+  const when = status.checked_at
+    ? new Date(status.checked_at).toLocaleString()
+    : "";
+  el.textContent = `${labels[status.status] || status.status}` +
+    `${status.detail ? ` — ${status.detail}` : ""}` +
+    `${when ? ` (${when})` : ""}${status.stale ? " · stale" : ""}`;
+}
+
+async function checkKey(field, statusEl, btn) {
+  btn.disabled = true;
+  statusEl.className = "key-status";
+  statusEl.textContent = "Checking…";
+  try {
+    const res = await api(`/api/settings/keys/${field}/check`, { method: "POST" });
+    renderKeyStatus(statusEl, res);
+  } catch (err) {
+    statusEl.className = "key-status err";
+    statusEl.textContent = `Check failed: ${err.message}`;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function deleteKey(field, btn) {
+  if (!confirm(`Delete the saved ${field === "tavily_api_key" ? "Tavily" : "OpenRouter"} key from the server?\n\nChatting (or web search) without it will fail until a new key is pasted.`)) {
+    return;
+  }
+  btn.disabled = true;
+  try {
+    await api(`/api/settings/keys/${field}`, { method: "DELETE" });
+    await loadSettings();
+    await checkHealth();
+  } catch (err) {
+    els.settingsStatus.classList.add("err");
+    els.settingsStatus.textContent = `Delete failed: ${err.message}`;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+els.keyCheckOpenrouter.addEventListener("click", () =>
+  checkKey("openrouter_api_key", els.keyStatusOpenrouter, els.keyCheckOpenrouter));
+els.keyCheckTavily.addEventListener("click", () =>
+  checkKey("tavily_api_key", els.keyStatusTavily, els.keyCheckTavily));
+els.keyDeleteOpenrouter.addEventListener("click", () =>
+  deleteKey("openrouter_api_key", els.keyDeleteOpenrouter));
+els.keyDeleteTavily.addEventListener("click", () =>
+  deleteKey("tavily_api_key", els.keyDeleteTavily));
 
 els.settingsSubmit.addEventListener("click", async () => {
   const body = {};
@@ -1853,7 +1935,7 @@ els.settingsSubmit.addEventListener("click", async () => {
   els.settingsStatus.className = "import-status";
   els.settingsStatus.textContent = "Saving…";
   try {
-    await api("/api/settings", {
+    const saved = await api("/api/settings", {
       method: "PUT",
       body: JSON.stringify(body),
     });
@@ -1863,7 +1945,16 @@ els.settingsSubmit.addEventListener("click", async () => {
     els.settingsAwsKey.value = "";
     els.settingsAwsSecret.value = "";
     els.settingsStatus.classList.add("ok");
-    els.settingsStatus.textContent = "Saved. Applied immediately, no restart needed.";
+    const verdicts = Object.entries(saved.checked_keys || {})
+      .map(([field, st]) =>
+        `${field === "tavily_api_key" ? "Tavily" : "OpenRouter"} key: ${
+          st.status === "valid" ? "✓ valid" :
+          st.status === "invalid" ? "✕ rejected by provider" :
+          st.status === "not_set" ? "cleared" : `⚠ ${st.detail}`
+        }`)
+      .join("; ");
+    els.settingsStatus.textContent =
+      "Saved. Applied immediately, no restart needed." + (verdicts ? ` ${verdicts}.` : "");
     await loadSettings();
     await checkHealth();
     await loadModels();
@@ -1925,3 +2016,120 @@ els.settingsBackupFile.addEventListener("change", async () => {
     els.settingsBackupStatus.textContent = `Restore failed: ${err.message}`;
   }
 });
+
+// ---------------------------------------------------------------
+// Prompt token caching usage (OpenRouter-dashboard style chart)
+// ---------------------------------------------------------------
+function fmtTokens(n) {
+  if (n >= 1e9) return (n / 1e9).toFixed(1).replace(/\.0$/, "") + "B";
+  if (n >= 1e6) return (n / 1e6).toFixed(1).replace(/\.0$/, "") + "M";
+  if (n >= 1e3) return (n / 1e3).toFixed(1).replace(/\.0$/, "") + "K";
+  return String(n);
+}
+
+function fmtDay(iso) {
+  const d = new Date(`${iso}T00:00:00Z`);
+  return d.toLocaleDateString(undefined, { month: "short", day: "numeric", timeZone: "UTC" });
+}
+
+function openUsage() {
+  els.usageModal.classList.remove("hidden");
+  loadUsage();
+}
+
+async function loadUsage() {
+  const days = parseInt(els.usageRange.value, 10) || 30;
+  els.usageChart.innerHTML = "";
+  els.usageSummary.textContent = "";
+  els.usageStatus.className = "import-status";
+  els.usageStatus.textContent = "Loading usage…";
+  try {
+    const data = await api(`/api/stats/prompt-cache?days=${days}`);
+    renderUsageChart(data);
+    els.usageStatus.textContent = "";
+  } catch (err) {
+    els.usageStatus.classList.add("err");
+    els.usageStatus.textContent = `Load failed: ${err.message}`;
+  }
+}
+
+function renderUsageChart(data) {
+  const buckets = data.buckets || [];
+  const totals = data.totals || {};
+  els.usageSummary.textContent =
+    `Prompt tokens: ${fmtTokens(totals.prompt || 0)} · ` +
+    `Cached: ${fmtTokens(totals.cached || 0)} (${totals.cached_share || 0}%) · ` +
+    `Uncached: ${fmtTokens(totals.uncached || 0)} · ` +
+    `Cost: $${(totals.cost || 0).toFixed(2)}`;
+  if (!buckets.length) {
+    els.usageChart.textContent = "No data.";
+    return;
+  }
+  const max = Math.max(1, ...buckets.map((b) => (b.cached || 0) + (b.uncached || 0)));
+
+  const inner = document.createElement("div");
+  inner.className = "usage-chart-inner";
+
+  // Y axis: five gridline labels from 0 to the tallest day, 30M-style.
+  const y = document.createElement("div");
+  y.className = "usage-yaxis";
+  for (let i = 4; i >= 0; i--) {
+    const s = document.createElement("span");
+    s.textContent = fmtTokens(Math.round((max * i) / 4));
+    y.append(s);
+  }
+
+  const plotWrap = document.createElement("div");
+  plotWrap.className = "usage-plotwrap";
+  const plot = document.createElement("div");
+  plot.className = "usage-plot";
+  const labels = document.createElement("div");
+  labels.className = "usage-xlabels";
+
+  const every = Math.max(1, Math.ceil(buckets.length / 10));
+  buckets.forEach((b, idx) => {
+    const total = (b.cached || 0) + (b.uncached || 0);
+    const col = document.createElement("div");
+    col.className = "usage-col";
+    if (total > 0) {
+      col.style.height = `${Math.max(2, (total / max) * 100)}%`;
+      col.title =
+        `${fmtDay(b.date)}\n` +
+        `Uncached: ${fmtTokens(b.uncached || 0)}\n` +
+        `Cached: ${fmtTokens(b.cached || 0)}\n` +
+        `Cost: $${(b.cost || 0).toFixed(4)}`;
+      // Uncached stacked on top of the cached base (OpenRouter layout).
+      const uncached = document.createElement("div");
+      uncached.className = "usage-seg uncached";
+      uncached.style.height = `${((b.uncached || 0) / total) * 100}%`;
+      const cached = document.createElement("div");
+      cached.className = "usage-seg cached";
+      cached.style.height = `${((b.cached || 0) / total) * 100}%`;
+      col.append(uncached, cached);
+    } else {
+      col.classList.add("empty");
+      col.title = `${fmtDay(b.date)} — no prompt tokens`;
+    }
+    plot.append(col);
+
+    const label = document.createElement("span");
+    label.textContent = idx % every === 0 ? fmtDay(b.date) : "";
+    labels.append(label);
+  });
+
+  plotWrap.append(plot, labels);
+  inner.append(y, plotWrap);
+  els.usageChart.append(inner);
+}
+
+els.usageBtn.addEventListener("click", openUsage);
+els.usageOpenLink.addEventListener("click", (e) => {
+  e.preventDefault();
+  openUsage();
+});
+els.usageClose.addEventListener("click", () => els.usageModal.classList.add("hidden"));
+els.usageModal.addEventListener("click", (e) => {
+  if (e.target === els.usageModal) els.usageModal.classList.add("hidden");
+});
+els.usageRange.addEventListener("change", loadUsage);
+els.usageRefresh.addEventListener("click", loadUsage);

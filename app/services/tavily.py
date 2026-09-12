@@ -11,6 +11,7 @@ from app.config import settings
 from app.services.provider_errors import ProviderError
 
 TAVILY_URL = "https://api.tavily.com/search"
+TAVILY_USAGE_URL = "https://api.tavily.com/usage"
 REQUEST_TIMEOUT = httpx.Timeout(30.0, connect=10.0)
 
 

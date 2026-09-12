@@ -16,6 +16,7 @@ class MessageOut(BaseModel):
     provider: str | None = None
     gen_id: str | None = None
     tokens_prompt: int | None = None
+    tokens_cached: int | None = None
     tokens_completion: int | None = None
     total_tokens: int | None = None
     cost: float | None = None
@@ -164,6 +165,7 @@ class ChatResponseItem(BaseModel):
     provider: str | None = None
     gen_id: str | None = None
     tokens_prompt: int | None = None
+    tokens_cached: int | None = None
     tokens_completion: int | None = None
     total_tokens: int | None = None
     cost: float | None = None
@@ -229,6 +231,7 @@ class ImportMessage(BaseModel):
     provider: str | None = None
     gen_id: str | None = None
     tokens_prompt: int | None = None
+    tokens_cached: int | None = None
     tokens_completion: int | None = None
     total_tokens: int | None = None
     cost: float | None = None
@@ -442,6 +445,7 @@ class SyncMessage(BaseModel):
     provider: str | None = None
     gen_id: str | None = None
     tokens_prompt: int | None = None
+    tokens_cached: int | None = None
     tokens_completion: int | None = None
     total_tokens: int | None = None
     cost: float | None = None

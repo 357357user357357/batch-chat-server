@@ -142,6 +142,9 @@ class Message(Base):
     provider: Mapped[str | None] = mapped_column(String(128), nullable=True)
     gen_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
     tokens_prompt: Mapped[int | None] = mapped_column(nullable=True)
+    # Prompt tokens served from OpenRouter's prompt cache (discounted rate);
+    # NULL on old rows (counted as uncached in the usage chart).
+    tokens_cached: Mapped[int | None] = mapped_column(nullable=True)
     tokens_completion: Mapped[int | None] = mapped_column(nullable=True)
     total_tokens: Mapped[int | None] = mapped_column(nullable=True)
     cost: Mapped[float | None] = mapped_column(nullable=True)

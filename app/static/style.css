@@ -701,3 +701,72 @@ input:focus, textarea:focus { outline: 2px solid var(--accent); outline-offset: 
 .cache-ping-error { flex-basis: 100%; color: var(--error); font-size: 11px; }
 .cache-ping-empty { font-size: 12px; color: var(--text-muted); }
 .cache-ping-enabled { font-size: 11px; color: var(--text-muted); margin-bottom: 4px; }
+
+/* --- API key status chips (Settings modal) --- */
+.key-status-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin: -2px 0 10px;
+}
+.key-status { font-size: 12px; color: var(--text-muted); min-height: 15px; }
+.key-status.ok { color: var(--success); }
+.key-status.err { color: var(--error); }
+.key-status-actions { display: flex; gap: 4px; flex-shrink: 0; }
+
+/* --- Prompt token caching usage modal --- */
+.usage-summary { font-size: 12px; color: var(--text); margin: 10px 0 4px; }
+.usage-chart { margin-top: 6px; }
+.usage-chart-inner { display: flex; gap: 6px; }
+.usage-yaxis {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  align-items: flex-end;
+  font-size: 10px;
+  color: var(--text-muted);
+  height: 184px; /* 160px plot + 24px label row */
+  min-width: 36px;
+  padding-bottom: 24px; /* keep labels inside the plot area only */
+}
+.usage-plotwrap { flex: 1; min-width: 0; }
+.usage-plot {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 160px;
+  border-left: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  padding: 0 2px;
+}
+.usage-col {
+  flex: 1;
+  min-width: 2px;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-start;
+}
+.usage-col.empty { min-height: 1px; }
+.usage-seg { width: 100%; }
+.usage-seg.uncached { background: #67718a; }
+.usage-seg.cached { background: var(--accent); }
+.usage-xlabels {
+  display: flex;
+  margin-top: 4px;
+  font-size: 10px;
+  color: var(--text-muted);
+}
+.usage-xlabels span { flex: 1; text-align: center; white-space: nowrap; }
+.usage-legend { display: flex; gap: 16px; margin-top: 10px; font-size: 12px; color: var(--text); }
+.legend-swatch {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  margin-right: 6px;
+  vertical-align: middle;
+}
+.legend-swatch.cached { background: var(--accent); }
+.legend-swatch.uncached { background: #67718a; }
+.usage-range { margin-right: auto; }

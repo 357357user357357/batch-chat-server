@@ -274,11 +274,15 @@ def chat_completion_full(
     usage = data.get("usage") or {}
     if not isinstance(usage, dict):
         usage = {}
+    prompt_details = usage.get("prompt_tokens_details")
+    if not isinstance(prompt_details, dict):
+        prompt_details = {}
     return {
         "content": content,
         "provider": data.get("provider"),
         "gen_id": data.get("id"),
         "tokens_prompt": usage.get("prompt_tokens"),
+        "tokens_cached": prompt_details.get("cached_tokens"),
         "tokens_completion": usage.get("completion_tokens"),
         "total_tokens": usage.get("total_tokens"),
         "cost": usage.get("cost"),
