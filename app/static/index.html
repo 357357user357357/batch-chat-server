@@ -48,10 +48,9 @@
         <span id="server-status" class="status-dot" title="Server status"></span>
         <span class="footer-actions">
           <span id="footer-menu" class="footer-menu">
-            <button id="menu-btn" class="btn btn-ghost btn-small" title="Import / Settings / Log out">☰ Menu</button>
+            <button id="menu-btn" class="btn btn-ghost btn-small" title="Settings / Prompt cache / Log out">☰ Menu</button>
             <span id="menu-popover" class="menu-popover hidden">
-              <button id="import-btn" class="btn btn-ghost btn-small" title="Import from the Android app">⬆ Import</button>
-              <button id="settings-btn" class="btn btn-ghost btn-small" title="Set provider API keys">⚙ Settings</button>
+              <button id="settings-btn" class="btn btn-ghost btn-small" title="Provider API keys · Android transfer · Settings backup">⚙ Settings</button>
               <button id="usage-btn" class="btn btn-ghost btn-small" title="Prompt token caching — daily cached vs uncached tokens">📈 Prompt cache</button>
               <button id="logout-btn" class="btn btn-ghost btn-small">⎋ Log out</button>
             </span>
@@ -86,7 +85,12 @@
           <button id="model-picker-btn" class="btn btn-ghost btn-small" title="Choose models">Models</button>
           <div id="model-dropdown" class="model-dropdown hidden">
             <p class="dropdown-hint" id="model-dropdown-hint">Answer with this model (Live):</p>
-            <input id="model-search-input" class="model-search" type="text" placeholder="Search models…" autocomplete="off" spellcheck="false" />
+            <input id="model-search-input" class="model-search" type="text" placeholder="Search models… (also the provider's full catalog)" autocomplete="off" spellcheck="false" />
+            <select id="model-sort-select" class="model-sort" title="List every model the provider has — sorted by release date (novelty) or by the outgoing (completion) token price">
+              <option value="">Picked models only</option>
+              <option value="new">All models · newest first</option>
+              <option value="output">All models · cheapest output tokens first</option>
+            </select>
             <div id="model-checkboxes"></div>
             <label class="model-custom">
               Custom model:
@@ -109,28 +113,6 @@
       </form>
     </main>
   </section>
-
-  <!-- Import modal -->
-  <div id="import-modal" class="modal-overlay hidden">
-    <div class="modal">
-      <div class="modal-header">
-        <h3>Import from the Android app</h3>
-        <button id="import-close" class="btn btn-ghost btn-small">✕</button>
-      </div>
-      <p class="modal-hint">
-        Paste the JSON you exported from the phone app
-        (<code>openrouter.dialogs.v1</code> and/or
-        <code>openrouter.batches.history.v1</code>). Either paste each list
-        separately, or a whole object containing those keys — both work.
-      </p>
-      <p class="untested-note">⚠️ Untested: this import path hasn't been verified yet — check the imported dialogs after importing.</p>
-      <textarea id="import-textarea" rows="10" placeholder='{"openrouter.dialogs.v1": [...], "openrouter.batches.history.v1": [...]}'></textarea>
-      <p id="import-status" class="import-status"></p>
-      <div class="modal-actions">
-        <button id="import-submit" class="btn btn-primary">Import</button>
-      </div>
-    </div>
-  </div>
 
   <!-- Message metadata modal (reasoning / provider / usage) -->
   <div id="meta-modal" class="modal-overlay hidden">
@@ -283,6 +265,34 @@
         <button id="account-rotate" class="btn btn-ghost btn-small">🔄 New key</button>
       </div>
       <p id="account-code" class="account-code hidden"></p>
+
+      <hr class="modal-divider" />
+      <p class="modal-hint">
+        <strong>Android transfer.</strong> ⬇ Export downloads every dialog and
+        batch of this account in the phone app's own format — import that file
+        on Android to get the whole history there. ⬆ Import does the reverse:
+        paste the JSON exported from the phone app
+        (<code>openrouter.dialogs.v1</code> and/or
+        <code>openrouter.batches.history.v1</code> — a whole AsyncStorage dump
+        works too).
+      </p>
+      <p id="settings-phone-status" class="import-status"></p>
+      <div class="modal-actions">
+        <button id="settings-phone-export" class="btn btn-ghost btn-small">⬇ Export for Android</button>
+      </div>
+      <p class="untested-note">
+        ⚠️ Untested: this export path hasn't been imported on a real phone yet —
+        check the dialogs on the phone after importing.
+      </p>
+      <textarea id="settings-import-textarea" rows="8" placeholder='{"openrouter.dialogs.v1": [...], "openrouter.batches.history.v1": [...]}'></textarea>
+      <p class="untested-note">
+        ⚠️ Untested: this import path hasn't been verified yet — check the
+        imported dialogs after importing.
+      </p>
+      <p id="settings-import-status" class="import-status"></p>
+      <div class="modal-actions">
+        <button id="settings-import-submit" class="btn btn-primary btn-small">⬆ Import from Android</button>
+      </div>
 
       <hr class="modal-divider" />
       <p class="modal-hint">

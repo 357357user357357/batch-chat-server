@@ -15,7 +15,7 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(levelname)s:%(name)s:%(message)s",
 )
-from app.routers import auth, batches, chat, conversations, import_conversations, settings as settings_router, stats, sync
+from app.routers import auth, batches, chat, conversations, export_conversations, import_conversations, settings as settings_router, stats, sync
 from app.services import cache_keeper
 from app.services.batch_worker import start_batch_worker
 from app.services.cache_keeper import start_cache_keeper
@@ -167,6 +167,7 @@ app.include_router(auth.router)
 app.include_router(conversations.router)
 app.include_router(chat.router)
 app.include_router(import_conversations.router)
+app.include_router(export_conversations.router)
 app.include_router(batches.router)
 app.include_router(settings_router.router)
 app.include_router(stats.router)

@@ -152,6 +152,15 @@ def available_models() -> dict:
     }
 
 
+@router.get("/models/all")
+def all_models(account_id: str = Depends(get_account_id)) -> dict:
+    """The provider's FULL model catalog for the picker's search + "all
+    models" list (id, display name, release date, context, per-token pricing).
+    Signed-in accounts only — the catalog is public data, but this stays
+    behind auth like every other user-facing endpoint."""
+    return {"models": openrouter.fetch_model_catalog()}
+
+
 @router.post("/send", response_model=ChatResponse)
 def send_chat(
     payload: ChatRequest,

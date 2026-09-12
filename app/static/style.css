@@ -503,6 +503,14 @@ input:focus, textarea:focus { outline: 2px solid var(--accent); outline-offset: 
   margin-bottom: 8px;
 }
 
+/* All-models sort selector (novelty / outgoing token price) */
+.model-sort {
+  width: 100%;
+  box-sizing: border-box;
+  margin-bottom: 8px;
+  font-size: 12px;
+}
+
 .model-search-empty {
   color: var(--text-muted);
   font-size: 12px;
@@ -516,7 +524,7 @@ input:focus, textarea:focus { outline: 2px solid var(--accent); outline-offset: 
 .model-custom { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--text-muted); margin-top: 10px; }
 .model-custom input { margin-top: 4px; }
 
-/* ---------- Import modal ---------- */
+/* ---------- Modals (meta / settings / usage) ---------- */
 .modal-overlay {
   position: fixed;
   inset: 0;

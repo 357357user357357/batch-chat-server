@@ -42,8 +42,8 @@ DEFAULT_BATCH_MODEL = "anthropic/claude-fable-5.1:batch"
 FLEX_SUFFIX = ":flex"
 BATCH_SUFFIX = ":batch"
 
-# Model pricing cache (USD per token, from the public OpenRouter catalog).
-_PRICING_CACHE: dict = {"data": None, "ts": 0.0}
+# OpenRouter catalog cache (public /models endpoint, no key needed).
+_CATALOG_CACHE: dict = {"data": None, "ts": 0.0}
 _PRICING_TTL_SECONDS = 3600.0
 
 
@@ -59,13 +59,13 @@ def split_model_variant(model: str) -> tuple[str, str | None]:
     return stripped, None
 
 
-def fetch_model_pricing() -> dict[str, dict[str, float]]:
-    """Per-token model pricing (USD) from the public OpenRouter catalog,
-    keyed by plain base model id and cached for an hour. Never raises —
-    on any failure it returns whatever was cached last (possibly {})."""
+def fetch_model_catalog() -> list[dict]:
+    """The full public OpenRouter model catalog (id, name, release date,
+    context length, per-token pricing), cached for an hour. Never raises —
+    on any failure it returns whatever was cached last (possibly [])."""
     now = time.time()
-    cached = _PRICING_CACHE["data"]
-    if cached is not None and now - _PRICING_CACHE["ts"] < _PRICING_TTL_SECONDS:
+    cached = _CATALOG_CACHE["data"]
+    if cached is not None and now - _CATALOG_CACHE["ts"] < _PRICING_TTL_SECONDS:
         return cached
     try:
         resp = httpx.get(
@@ -75,20 +75,37 @@ def fetch_model_pricing() -> dict[str, dict[str, float]]:
         resp.raise_for_status()
         entries = resp.json().get("data", [])
     except Exception:
-        return cached or {}
-    pricing: dict[str, dict[str, float]] = {}
+        return cached or []
+    catalog: list[dict] = []
     for entry in entries:
+        if not isinstance(entry, dict) or not entry.get("id"):
+            continue
         raw = entry.get("pricing") or {}
         try:
-            pricing[entry["id"]] = {
-                "prompt": float(raw.get("prompt") or 0),
-                "completion": float(raw.get("completion") or 0),
-            }
-        except (KeyError, TypeError, ValueError):
+            prompt = float(raw.get("prompt") or 0)
+            completion = float(raw.get("completion") or 0)
+        except (TypeError, ValueError):
             continue
-    _PRICING_CACHE["data"] = pricing
-    _PRICING_CACHE["ts"] = now
-    return pricing
+        catalog.append(
+            {
+                "id": entry["id"],
+                "name": entry.get("name") or entry["id"],
+                "created": entry.get("created"),
+                "context_length": entry.get("context_length"),
+                "prompt": prompt,
+                "completion": completion,
+            }
+        )
+    _CATALOG_CACHE["data"] = catalog
+    _CATALOG_CACHE["ts"] = now
+    return catalog
+
+
+def fetch_model_pricing() -> dict[str, dict[str, float]]:
+    """Per-token model pricing (USD) from the public OpenRouter catalog,
+    keyed by plain base model id (derived from the shared catalog cache)."""
+    return {m["id"]: {"prompt": m["prompt"], "completion": m["completion"]}
+            for m in fetch_model_catalog()}
 
 
 def is_reasoning_unsupported_error(status_code: int, message: str) -> bool:

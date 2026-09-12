@@ -21,6 +21,13 @@ const state = {
   sending: false,
   // Model-picker search filter ("" = show everything)
   modelSearchQuery: "",
+  // "new" | "output" = show the provider's FULL catalog sorted that way;
+  // "" = the picked models only (a search still reaches the full catalog).
+  modelSort: ["new", "output"].includes(localStorage.getItem("bc_model_sort"))
+    ? localStorage.getItem("bc_model_sort")
+    : "",
+  modelCatalog: [],
+  modelCatalogLoaded: false,
 };
 
 const els = {
@@ -51,6 +58,7 @@ const els = {
   modelPickerBtn: $("#model-picker-btn"),
   modelDropdownHint: $("#model-dropdown-hint"),
   modelSearchInput: $("#model-search-input"),
+  modelSortSelect: $("#model-sort-select"),
   modeLiveBtn: $("#mode-live-btn"),
   modeFlexBtn: $("#mode-flex-btn"),
   modeBatchBtn: $("#mode-batch-btn"),
@@ -60,14 +68,8 @@ const els = {
   modelCheckboxes: $("#model-checkboxes"),
   customModelInput: $("#custom-model-input"),
   addModelBtn: $("#add-model-btn"),
-  importBtn: $("#import-btn"),
-  importModal: $("#import-modal"),
   menuBtn: $("#menu-btn"),
   menuPopover: $("#menu-popover"),
-  importClose: $("#import-close"),
-  importTextarea: $("#import-textarea"),
-  importStatus: $("#import-status"),
-  importSubmit: $("#import-submit"),
   cacheBtn: $("#cache-btn"),
   reasoningSelect: $("#reasoning-select"),
   settingsBtn: $("#settings-btn"),
@@ -106,6 +108,11 @@ const els = {
   accountDelete: $("#account-delete"),
   accountDangerNote: $("#account-danger-note"),
   accountCode: $("#account-code"),
+  settingsPhoneExport: $("#settings-phone-export"),
+  settingsPhoneStatus: $("#settings-phone-status"),
+  settingsImportTextarea: $("#settings-import-textarea"),
+  settingsImportStatus: $("#settings-import-status"),
+  settingsImportSubmit: $("#settings-import-submit"),
   settingsBackupDownload: $("#settings-backup-download"),
   settingsBackupRestoreBtn: $("#settings-backup-restore-btn"),
   settingsBackupFile: $("#settings-backup-file"),
@@ -387,36 +394,42 @@ els.modeFlexBtn.addEventListener("click", () => pickChatMode("flex"));
 
 els.modeBatchBtn.addEventListener("click", () => pickChatMode("batch"));
 
+// Row cap for the full-catalog list (the provider serves 300+ models).
+const MODEL_ROW_CAP = 300;
+
 function renderModelCheckboxes() {
   els.modelCheckboxes.innerHTML = "";
   const query = (state.modelSearchQuery || "").trim().toLowerCase();
   let shown = 0;
-  state.defaultModels.forEach((model) => {
-    // Search filter: case-insensitive substring on the model id.
-    if (query && !model.toLowerCase().includes(query)) return;
+  const listedIds = new Set();
+
+  const addRow = (id, name, price) => {
+    // ":batch" ids are async-only — they can't answer a live request.
+    if (state.chatMode !== "batch" && id.endsWith(":batch")) return;
+    listedIds.add(id);
     const label = document.createElement("label");
     label.className = "model-check";
     const cb = document.createElement("input");
     if (state.chatMode !== "batch") {
       // Live & Flex chat: single choice, like the phone app's chat tab.
-      // ":batch" ids are async-only — they can't answer a live request.
-      if (model.endsWith(":batch")) return;
       cb.type = "radio";
       cb.name = "live-model";
-      cb.checked = model === state.liveModel;
+      cb.checked = id === state.liveModel;
       cb.addEventListener("change", () => {
-        state.liveModel = model;
+        state.liveModel = id;
         saveChatMode();
         renderModelCheckboxes();
       });
     } else {
       // Batch chat: any number of models in parallel.
       cb.type = "checkbox";
-      cb.checked = (state.selectedModels || []).includes(model);
-      cb.addEventListener("change", () => toggleModel(model, cb.checked));
+      cb.checked = (state.selectedModels || []).includes(id);
+      cb.addEventListener("change", () => toggleModel(id, cb.checked));
     }
-    label.append(cb, model);
-    const price = modePrice(model);
+    const text = document.createElement("span");
+    text.textContent = name;
+    text.title = id;
+    label.append(cb, text);
     if (price) {
       const span = document.createElement("span");
       span.className = "model-price";
@@ -426,7 +439,47 @@ function renderModelCheckboxes() {
     }
     shown++;
     els.modelCheckboxes.appendChild(label);
-  });
+  };
+
+  const matches = (m) =>
+    !query || `${m.id} ${m.name || ""}`.toLowerCase().includes(query);
+
+  if (state.modelSort === "new" || state.modelSort === "output") {
+    // Full provider catalog sorted by release date (novelty) or by the
+    // outgoing (completion) token price; the search box filters it too.
+    const rows = state.modelCatalog
+      .filter(matches)
+      .sort(
+        state.modelSort === "new"
+          ? (a, b) => (b.created || 0) - (a.created || 0) || a.id.localeCompare(b.id)
+          : (a, b) => a.completion - b.completion || a.prompt - b.prompt || a.id.localeCompare(b.id),
+      );
+    rows.slice(0, MODEL_ROW_CAP).forEach((m) => addRow(m.id, m.name || m.id, catalogPrice(m)));
+    if (rows.length > MODEL_ROW_CAP) {
+      const note = document.createElement("div");
+      note.className = "model-search-empty";
+      note.textContent = `Showing the first ${MODEL_ROW_CAP} of ${rows.length} — type to narrow it down.`;
+      els.modelCheckboxes.appendChild(note);
+    }
+  } else {
+    // Picked models; typing letters also greps the provider's full catalog
+    // (phone-style interactive search over everything the provider has).
+    state.defaultModels.forEach((model) => {
+      if (query && !model.toLowerCase().includes(query)) return;
+      addRow(model, model, modePrice(model));
+    });
+    if (query && state.modelCatalog.length) {
+      const factor = state.chatMode === "flex" ? 0.5 : 1;
+      state.modelCatalog
+        .filter((m) => !listedIds.has(m.id) && matches(m))
+        .slice(0, 60)
+        .forEach((m) => {
+          const price = { prompt: m.prompt * factor, completion: m.completion * factor };
+          addRow(m.id, m.name || m.id, price);
+        });
+    }
+  }
+
   if (!shown) {
     const none = document.createElement("div");
     none.className = "model-search-empty";
@@ -435,6 +488,23 @@ function renderModelCheckboxes() {
       : "No models available.";
     els.modelCheckboxes.appendChild(none);
   }
+}
+
+// Catalog row price per chat mode: the picker's plain ids run at the
+// standard tier (the ⚡ parallel chat), Flex runs at the 50% discount.
+function catalogPrice(m) {
+  const factor = state.chatMode === "flex" ? 0.5 : 1;
+  return { prompt: m.prompt * factor, completion: m.completion * factor };
+}
+
+// Full provider catalog for the picker's search + sorted "all models" list.
+async function loadModelCatalog() {
+  if (state.modelCatalogLoaded) return;
+  try {
+    const data = await api("/api/chat/models/all");
+    state.modelCatalog = data.models || [];
+    state.modelCatalogLoaded = true;
+  } catch { /* catalog stays empty — the picked models still work */ }
 }
 
 // Mode-aware pricing: the server returns {live, flex, batch} per model —
@@ -473,8 +543,11 @@ els.modelPickerBtn.addEventListener("click", (e) => {
     // Fresh start every time the picker opens: clear any previous search.
     state.modelSearchQuery = "";
     els.modelSearchInput.value = "";
+    els.modelSortSelect.value = state.modelSort;
     renderModelCheckboxes();
     els.modelSearchInput.focus();
+    // The provider's full catalog arrives async (cached after the first open).
+    loadModelCatalog().then(renderModelCheckboxes);
   }
 });
 
@@ -482,6 +555,13 @@ els.modelPickerBtn.addEventListener("click", (e) => {
 els.modelSearchInput.addEventListener("input", () => {
   state.modelSearchQuery = els.modelSearchInput.value;
   renderModelCheckboxes();
+});
+
+// All-models sorting: novelty (newest release first) or outgoing token price.
+els.modelSortSelect.addEventListener("change", () => {
+  state.modelSort = els.modelSortSelect.value;
+  localStorage.setItem("bc_model_sort", state.modelSort);
+  loadModelCatalog().then(renderModelCheckboxes);
 });
 
 document.addEventListener("click", () => els.modelDropdown.classList.add("hidden"));
@@ -1428,7 +1508,7 @@ els.chatInput.addEventListener("keydown", (e) => {
 });
 
 // ---------------------------------------------------------------
-// Footer menu (☰) — reveals Import / Settings / Log out
+// Footer menu (☰) — reveals Settings / Prompt cache / Log out
 // ---------------------------------------------------------------
 function closeFooterMenu() {
   els.menuPopover.classList.add("hidden");
@@ -1449,25 +1529,9 @@ els.menuPopover.addEventListener("click", (e) => {
 document.addEventListener("click", closeFooterMenu);
 
 // ---------------------------------------------------------------
-// Import from the Android app
+// Android transfer (inside the Settings modal): export this
+// account's dialogs for the phone app, import a phone export back.
 // ---------------------------------------------------------------
-function openImport() {
-  els.importStatus.className = "import-status";
-  els.importStatus.textContent = "";
-  els.importTextarea.value = "";
-  els.importModal.classList.remove("hidden");
-}
-
-function closeImport() {
-  els.importModal.classList.add("hidden");
-}
-
-els.importBtn.addEventListener("click", openImport);
-els.importClose.addEventListener("click", closeImport);
-els.importModal.addEventListener("click", (e) => {
-  if (e.target === els.importModal) closeImport();
-});
-
 /**
  * Normalize a paste so the server always receives {dialogs, batches}.
  * Accepts a raw AsyncStorage dump (openrouter.dialogs.v1 / .batches.history.v1),
@@ -1503,12 +1567,12 @@ function normalizePhonePayload(raw) {
   throw new Error("Unrecognized array format. Paste a dialogs or batches export.");
 }
 
-els.importSubmit.addEventListener("click", async () => {
-  const rawText = els.importTextarea.value.trim();
+els.settingsImportSubmit.addEventListener("click", async () => {
+  const rawText = els.settingsImportTextarea.value.trim();
   if (!rawText) return;
-  els.importSubmit.disabled = true;
-  els.importStatus.className = "import-status";
-  els.importStatus.textContent = "Importing…";
+  els.settingsImportSubmit.disabled = true;
+  els.settingsImportStatus.className = "import-status";
+  els.settingsImportStatus.textContent = "Importing…";
 
   try {
     const parsed = JSON.parse(rawText);
@@ -1518,16 +1582,41 @@ els.importSubmit.addEventListener("click", async () => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
     });
-    els.importStatus.classList.add("ok");
-    els.importStatus.textContent =
+    els.settingsImportStatus.classList.add("ok");
+    els.settingsImportStatus.textContent =
       `Imported ${result.conversations_created} conversations, ` +
       `${result.messages_created} messages.`;
+    els.settingsImportTextarea.value = "";
     await loadConversations();
   } catch (err) {
-    els.importStatus.classList.add("err");
-    els.importStatus.textContent = `Import failed: ${err.message}`;
+    els.settingsImportStatus.classList.add("err");
+    els.settingsImportStatus.textContent = `Import failed: ${err.message}`;
   } finally {
-    els.importSubmit.disabled = false;
+    els.settingsImportSubmit.disabled = false;
+  }
+});
+
+els.settingsPhoneExport.addEventListener("click", async () => {
+  els.settingsPhoneStatus.className = "import-status";
+  els.settingsPhoneStatus.textContent = "Preparing export…";
+  try {
+    const data = await api("/api/export/phone");
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `batch-chat-android-export-${new Date().toISOString().slice(0, 10)}.json`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+    els.settingsPhoneStatus.classList.add("ok");
+    els.settingsPhoneStatus.textContent =
+      `Export downloaded: ${(data["openrouter.dialogs.v1"] || []).length} dialogs, ` +
+      `${(data["openrouter.batches.history.v1"] || []).length} batches. Import it on the phone.`;
+  } catch (err) {
+    els.settingsPhoneStatus.classList.add("err");
+    els.settingsPhoneStatus.textContent = `Export failed: ${err.message}`;
   }
 });
 
@@ -1537,6 +1626,11 @@ els.importSubmit.addEventListener("click", async () => {
 function openSettings() {
   els.settingsStatus.className = "import-status";
   els.settingsStatus.textContent = "";
+  els.settingsPhoneStatus.className = "import-status";
+  els.settingsPhoneStatus.textContent = "";
+  els.settingsImportStatus.className = "import-status";
+  els.settingsImportStatus.textContent = "";
+  els.settingsImportTextarea.value = "";
   els.settingsModal.classList.remove("hidden");
   loadSettings();
   loadAccount();
