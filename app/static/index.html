@@ -194,18 +194,22 @@
         needed. Leave a field blank to keep its current value.
       </p>
 
-      <p class="modal-hint" style="margin-top:8px">Owner access</p>
-      <div class="key-status-row">
-        <input id="settings-owner-email" type="email" placeholder="you@example.com" autocomplete="off" spellcheck="false" />
-        <span class="key-status-actions">
-          <button id="owner-email-save" class="btn btn-ghost btn-small" title="Bind this e-mail to the owner account">🔗 Bind</button>
-        </span>
+      <p id="settings-identity" class="modal-hint" style="margin-top:8px;font-weight:600"></p>
+
+      <div id="owner-access-block">
+        <p class="modal-hint">Owner access</p>
+        <div class="key-status-row">
+          <input id="settings-owner-email" type="email" placeholder="you@example.com" autocomplete="off" spellcheck="false" />
+          <span class="key-status-actions">
+            <button id="owner-email-save" class="btn btn-ghost btn-small" title="Bind this e-mail to the owner account">🔗 Bind</button>
+          </span>
+        </div>
+        <p class="modal-hint">
+          Signing in with this e-mail (password or Google) logs you into the
+          owner account — full settings and server-wide stats. Google or not,
+          doesn't matter.
+        </p>
       </div>
-      <p class="modal-hint">
-        Signing in with this e-mail (password or Google) logs you into the
-        owner account — full settings and server-wide stats. Google or not,
-        doesn't matter.
-      </p>
 
       <label class="modal-field">
         OpenRouter API key <span id="settings-openrouter-hint" class="settings-hint"></span>

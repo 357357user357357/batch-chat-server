@@ -101,6 +101,8 @@ const els = {
   settingsSubmit: $("#settings-submit"),
   settingsOwnerEmail: $("#settings-owner-email"),
   ownerEmailSave: $("#owner-email-save"),
+  settingsIdentity: $("#settings-identity"),
+  ownerAccessBlock: $("#owner-access-block"),
   settingsBackupStatus: $("#settings-backup-status"),
   accountStatus: $("#account-status"),
   accountReveal: $("#account-reveal"),
@@ -1816,6 +1818,17 @@ els.settingsModal.addEventListener("click", (e) => {
 });
 
 async function loadSettings() {
+  try {
+    const me = await api("/api/auth/me");
+    const who = me.email || me.label || me.account_id;
+    els.settingsIdentity.textContent = me.is_owner
+      ? `Signed in as: ${who} — owner account`
+      : `Signed in as: ${who}`;
+    els.ownerAccessBlock.classList.toggle("hidden", !me.is_owner);
+  } catch {
+    els.settingsIdentity.textContent = "";
+    els.ownerAccessBlock.classList.add("hidden");
+  }
   try {
     const data = await api("/api/settings");
     els.settingsOpenrouterHint.textContent = data.openrouter_api_key.configured

@@ -428,12 +428,16 @@ def logout(
 
 @router.get("/auth/me")
 def me(account_id: str = Depends(get_account_id), db: Session = Depends(get_db)) -> dict:
+    from app.models import Account
     from app.services.account import ensure_owner_account
 
+    account = db.get(Account, account_id)
     return {
         "ok": True,
         "account_id": account_id,
         "is_owner": account_id == ensure_owner_account(db).id,
+        "email": account.email if account else None,
+        "label": account.label if account else None,
     }
 
 
