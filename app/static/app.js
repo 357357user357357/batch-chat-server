@@ -756,11 +756,19 @@ function appendMessage(msg, opts = {}) {
     div.appendChild(metaBtn);
   }
 
-  if (msg.role === "assistant") {
+  if (msg.role === "user") {
+    const editBtn = document.createElement("button");
+    editBtn.type = "button";
+    editBtn.className = "message-edit";
+    editBtn.title = "✏️ Edit this question (the previous wording stays archived on the server)";
+    editBtn.textContent = "✏️ Edit";
+    editBtn.addEventListener("click", () => editMessage(msg, div));
+    div.appendChild(editBtn);
+
     const retryBtn = document.createElement("button");
     retryBtn.type = "button";
     retryBtn.className = "message-retry";
-    retryBtn.title = "🔄 Re-answer this question with other model(s) — the fresh answers appear right after this one";
+    retryBtn.title = "🔄 Re-ask this question with other model(s) — the fresh answers appear right under it";
     retryBtn.textContent = "🔄 Retry";
     retryBtn.addEventListener("click", () => retryMessage(msg, retryBtn, div));
     div.appendChild(retryBtn);
@@ -809,13 +817,83 @@ async function deleteMessage(msg, node) {  if (!msg.id || !state.currentConversa
   }
 }
 
-/** 🔄 Re-answer one assistant reply with other model(s): asks for the model
- * id(s) (comma-separate to compare several), POSTs /api/chat/retry and inserts
- * the fresh answers right after the retried one. Old answers are kept — delete
- * any you don't want as usual. */
+/** ✏️ Edit one of your own questions in place: swaps the bubble into an
+ * inline editor, PATCHes the new wording to the server (the previous text is
+ * tombstoned, so stale device pushes can't resurrect it) and re-renders the
+ * bubble. Then 🔄 Retry on the edited question re-answers it in place. */
+async function editMessage(msg, node) {
+  if (!msg.id || !state.currentConversationId) {
+    alert("This message has no id yet — reopen the conversation and try again.");
+    return;
+  }
+  const textDiv = node.querySelector(".message-text");
+  if (!textDiv || node.dataset.editing === "1") return;
+  node.dataset.editing = "1";
+
+  const ta = document.createElement("textarea");
+  ta.value = msg.content || "";
+  ta.rows = Math.min(10, Math.max(2, (msg.content || "").split("\n").length + 1));
+  const actions = document.createElement("div");
+  actions.className = "message-edit-actions";
+  const saveBtn = document.createElement("button");
+  saveBtn.type = "button";
+  saveBtn.className = "message-edit-save";
+  saveBtn.textContent = "✓ Save";
+  const cancelBtn = document.createElement("button");
+  cancelBtn.type = "button";
+  cancelBtn.className = "message-edit-cancel";
+  cancelBtn.textContent = "✕ Cancel";
+  actions.append(saveBtn, cancelBtn);
+  textDiv.innerHTML = "";
+  textDiv.append(ta, actions);
+  ta.focus();
+
+  const restore = () => {
+    node.dataset.editing = "";
+    renderRichText(textDiv, msg.content || "");
+  };
+  cancelBtn.addEventListener("click", restore);
+  ta.addEventListener("keydown", (e) => {
+    if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
+      e.preventDefault();
+      saveBtn.click();
+    }
+    if (e.key === "Escape") {
+      e.preventDefault();
+      restore();
+    }
+  });
+  saveBtn.addEventListener("click", async () => {
+    const next = ta.value.trim();
+    if (!next) return;
+    if (next === msg.content) { restore(); return; }
+    saveBtn.disabled = true;
+    saveBtn.textContent = "Saving…";
+    try {
+      await api(`/api/conversations/${state.currentConversationId}/messages/${msg.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ content: next }),
+      });
+      msg.content = next;
+      restore();
+      loadConversations().catch(() => {}); // sidebar preview may be stale
+    } catch (err) {
+      alert(`Edit failed: ${err.message}`);
+      restore();
+    } finally {
+      saveBtn.disabled = false;
+      saveBtn.textContent = "✓ Save";
+    }
+  });
+}
+
+/** 🔄 Re-answer one assistant reply — or re-ask one question — with other
+ * model(s): asks for the model id(s) (comma-separate to compare several),
+ * POSTs /api/chat/retry and inserts the fresh answers right after the anchor
+ * message. Old answers are kept — delete any you don't want as usual. */
 async function retryMessage(msg, btn, node) {
   if (!msg.id || !state.currentConversationId) {
-    alert("This answer has no id yet — reopen the conversation and try again.");
+    alert("This message has no id yet — reopen the conversation and try again.");
     return;
   }
   const fallback = msg.model
@@ -823,7 +901,9 @@ async function retryMessage(msg, btn, node) {
     || (state.selectedModels || [])[0]
     || "";
   const input = prompt(
-    "Re-answer with model(s) — comma-separate several (e.g. openai/gpt-4o-mini, deepseek/deepseek-chat):",
+    msg.role === "user"
+      ? "Re-ask this question with model(s) — comma-separate several (e.g. openai/gpt-4o-mini, deepseek/deepseek-chat):"
+      : "Re-answer with model(s) — comma-separate several (e.g. openai/gpt-4o-mini, deepseek/deepseek-chat):",
     fallback,
   );
   if (input === null) return;

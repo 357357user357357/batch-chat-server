@@ -33,6 +33,7 @@ from app.models import (
     utcnow,
 )
 from app.schemas import (
+    MessageUpdate,
     SyncConversationOut,
     SyncMessage,
     SyncPullResponse,
@@ -40,6 +41,7 @@ from app.schemas import (
     SyncPushResponse,
 )
 from app.security import get_account_id
+from app.services.messages import edit_user_message
 from app.services.phone_sync import batch_messages, dialog_messages, title_default
 from app.services.account import default_account_id
 from app.services.settings_store import adopt_missing_keys, syncable_keys
@@ -374,6 +376,49 @@ def delete_synced_message(
     conv.updated_at = utcnow()
     db.commit()
     return {"ok": True}
+
+
+@router.patch("/dialogs/{external_id}/messages/{message_id}")
+def edit_synced_message(
+    external_id: str,
+    message_id: int,
+    payload: MessageUpdate,
+    request: Request,
+    db: Session = Depends(get_db),
+    account_id: str = Depends(get_account_id),
+) -> dict:
+    """✏️ Edit one of your own questions in a synced dialog (phone UI).
+
+    Works by external_id (the id the phone already knows) + message serverId,
+    same as per-message delete. The old wording is tombstoned, the dialog's
+    updated_at is bumped, so the web and other devices get the edit on their
+    next pull — and stale pushes carrying the old text are skipped.
+    """
+    conv = db.scalar(
+        select(Conversation).where(
+            Conversation.external_id == external_id,
+            Conversation.deleted_at.is_(None),
+            Conversation.account_id == account_id,
+        )
+    )
+    if conv is None:
+        raise HTTPException(status_code=404, detail="Dialog not found")
+    msg = db.scalar(
+        select(Message).where(
+            Message.id == message_id,
+            Message.conversation_id == conv.id,
+            Message.deleted_at.is_(None),
+        )
+    )
+    if msg is None:
+        raise HTTPException(status_code=404, detail="Message not found")
+    if msg.role != "user":
+        raise HTTPException(
+            status_code=400, detail="Only your own questions can be edited"
+        )
+    edit_user_message(db, conv, msg, payload.content, device_label(request))
+    db.commit()
+    return {"ok": True, "content": msg.content}
 
 
 def _parse_since(value: str):

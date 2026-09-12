@@ -27,6 +27,7 @@ You asked which tools to use — here is the reasoning behind what's in this rep
 - ✍️ Messages render **Markdown + LaTeX** (`$...$`, `$$...$$`, `\(...\)`, `\[...\]`), and every message has a **Copy** button that copies the raw source (LaTeX included), not the rendered HTML
 - ⚙️ **Settings modal** in the web UI to set OpenRouter/Vertex/Bedrock credentials — saved to the server DB and applied immediately, no SSH or restart needed
 - 🗑️ **Delete any question/answer inside a dialogue** from the web — the text stays archived in the server DB, and every synced device (including the phone) drops it on the next sync
+- ✏️ **Edit your own questions** (web + phone) and 🔄 **retry them** — retry works on answers AND questions (fresh answers appear right under the question; the model sees the context up to it only, so re-asking an edited question uses the new wording)
 - 🔁 **Key sync** — OpenRouter/Tavily keys are unified between phone and server (gaps filled both ways, server-first)
 - ⚡ **Flex processing tier** — append `:flex` to any model (e.g. `openai/gpt-6-astra:flex`) for the cheaper `service_tier="flex"` processing; if the provider doesn't serve flex for that model, the server falls back to the standard tier automatically (or run it through the Batch API)
 - 🔥 **Cache keep-alive** — after the last chat, near-empty pings (every 45 min) refresh the 1-hour prompt cache at ~10% of input cost, keeping replies cheap for 2–24 hours instead of just one (Settings → Cache keep-alive; 0 = off)
@@ -129,8 +130,9 @@ Interactive docs are available at `/api/docs`.
 | PATCH | `/api/conversations/{id}` | Rename conversation |
 | DELETE | `/api/conversations/{id}` | Delete conversation |
 | POST | `/api/conversations/{id}/messages` | Manually append a message |
+| PATCH | `/api/conversations/{id}/messages/{id}` | ✏️ Edit one of your own questions (old wording tombstoned) |
 | POST | `/api/chat/send` | Send one message to N models in parallel (stores results) |
-| POST | `/api/chat/retry` | 🔄 Re-answer one assistant reply with other model(s) — new answers stored right after the original |
+| POST | `/api/chat/retry` | 🔄 Re-answer one assistant reply — or re-ask one question (e.g. after ✏️ editing it) — with other model(s); new answers stored right after the anchor message |
 | GET | `/api/chat/models` | List default model suggestions |
 | POST | `/api/import` | Bulk-import conversations (generic JSON) |
 | POST | `/api/import/phone` | Import Android-app AsyncStorage JSON (`dialogs` + `batches`) |

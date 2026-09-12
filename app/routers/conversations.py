@@ -15,9 +15,11 @@ from app.schemas import (
     KeepaliveToggle,
     MessageCreate,
     MessageOut,
+    MessageUpdate,
 )
 from app.security import get_account_id, get_current_token
 from app.services import cache_keeper
+from app.services.messages import edit_user_message
 
 router = APIRouter(prefix="/api/conversations", tags=["conversations"])
 
@@ -190,6 +192,41 @@ def add_message(
         sort_index=next_sort_index(db, conversation_id),
     )
     db.add(msg)
+    db.commit()
+    db.refresh(msg)
+    return MessageOut.model_validate(msg)
+
+
+@router.patch("/{conversation_id}/messages/{message_id}", response_model=MessageOut)
+def edit_message(
+    conversation_id: int,
+    message_id: int,
+    payload: MessageUpdate,
+    request: Request,
+    db: Session = Depends(get_db),
+    account_id: str = Depends(get_account_id),
+) -> MessageOut:
+    """✏️ Edit one of your own questions (web UI).
+
+    The text is updated in place; the previous wording is tombstoned so a
+    stale device push can never resurrect it. Answers (assistant messages)
+    cannot be edited — retry them with 🔄 instead.
+    """
+    conv = _fetch_conversation(db, conversation_id, account_id)
+    msg = db.scalar(
+        select(Message).where(
+            Message.id == message_id,
+            Message.conversation_id == conv.id,
+            Message.deleted_at.is_(None),
+        )
+    )
+    if msg is None:
+        raise HTTPException(status_code=404, detail="Message not found")
+    if msg.role != "user":
+        raise HTTPException(
+            status_code=400, detail="Only your own questions can be edited"
+        )
+    edit_user_message(db, conv, msg, payload.content, device_label(request))
     db.commit()
     db.refresh(msg)
     return MessageOut.model_validate(msg)

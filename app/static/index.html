@@ -120,6 +120,7 @@
         <code>openrouter.batches.history.v1</code>). Either paste each list
         separately, or a whole object containing those keys — both work.
       </p>
+      <p class="untested-note">⚠️ Untested: this import path hasn't been verified yet — check the imported dialogs after importing.</p>
       <textarea id="import-textarea" rows="10" placeholder='{"openrouter.dialogs.v1": [...], "openrouter.batches.history.v1": [...]}'></textarea>
       <p id="import-status" class="import-status"></p>
       <div class="modal-actions">
@@ -142,6 +143,7 @@
         formats. Each line is sent to the batch model; answers land in a new
         conversation.
       </p>
+      <p class="untested-note">⚠️ Untested: the Google Vertex AI and AWS Bedrock line formats have not been verified against real GCP/AWS exports — OpenRouter/OpenAI lines are the safe path.</p>
       <label class="modal-field">
         Model
         <input id="batch-model" type="text" value="anthropic/claude-fable-5.1:batch" />
@@ -234,7 +236,7 @@
       </p>
 
       <hr class="modal-divider" />
-      <p class="modal-hint" style="margin-top:8px">Google Vertex AI <em>(optional — not currently in use)</em></p>
+      <p class="modal-hint" style="margin-top:8px">Google Vertex AI <em>(optional — not currently in use · ⚠️ untested)</em></p>
       <label class="modal-field">
         Project ID
         <input id="settings-google-project" type="text" placeholder="my-gcp-project" autocomplete="off" />
@@ -248,7 +250,7 @@
         <textarea id="settings-google-json" rows="4" spellcheck="false" placeholder='{"type": "service_account", ...}'></textarea>
       </label>
 
-      <p class="modal-hint" style="margin-top:8px">AWS Bedrock <em>(optional — not currently in use)</em></p>
+      <p class="modal-hint" style="margin-top:8px">AWS Bedrock <em>(optional — not currently in use · ⚠️ untested)</em></p>
       <label class="modal-field">
         Access key ID <span id="settings-aws-key-hint" class="settings-hint"></span>
         <input id="settings-aws-key" type="password" placeholder="AKIA…" autocomplete="off" />

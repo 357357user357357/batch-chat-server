@@ -373,6 +373,51 @@ input:focus, textarea:focus { outline: 2px solid var(--accent); outline-offset: 
 .message-retry:hover:not(:disabled) { color: var(--accent); }
 .message-retry:disabled { opacity: 0.6; cursor: wait; }
 
+.message-edit {
+  display: inline-block;
+  margin-top: 6px;
+  margin-left: 10px;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 11px;
+  cursor: pointer;
+  padding: 2px 0;
+}
+.message-edit:hover { color: var(--accent); }
+.message-edit textarea {
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 72px;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 8px;
+  font: inherit;
+  font-size: 14px;
+  resize: vertical;
+}
+.message-edit-actions { display: flex; gap: 12px; margin-top: 6px; }
+.message-edit-save,
+.message-edit-cancel {
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 11px;
+  cursor: pointer;
+  padding: 2px 0;
+}
+.message-edit-save:hover:not(:disabled) { color: var(--accent); }
+.message-edit-cancel:hover { color: var(--error); }
+.message-edit-save:disabled { opacity: 0.6; cursor: wait; }
+
+.untested-note {
+  color: #d9a441;
+  font-size: 12px;
+  margin-top: 6px;
+}
+
 .message-meta {
   display: inline-block;
   margin-top: 6px;

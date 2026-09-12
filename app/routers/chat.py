@@ -283,14 +283,16 @@ def retry_answer(
     db: Session = Depends(get_db),
     account_id: str = Depends(get_account_id),
 ) -> RetryResponse:
-    """🔄 Re-answer one assistant reply with other model(s).
+    """🔄 Re-answer one assistant reply — or re-ask one question — with other
+    model(s).
 
-    The question that precedes the answer is re-asked to every model in
-    `models` using the context UP TO that question (the retried answer and
-    everything after it are excluded — the same view the original model had).
-    New answers are stored immediately after the retried one, so they show up
-    next to it on the web and on every synced device; older answers are kept
-    for comparison (delete any you don't want as usual).
+    The message may be an assistant answer (its question is found and
+    re-asked) or the user question itself (e.g. right after editing it). Every
+    model in `models` sees the context UP TO that question (the old answers
+    and everything after it are excluded — the same view the original model
+    had). New answers are stored immediately after the anchor message, so they
+    show up next to it on the web and on every synced device; older answers
+    are kept for comparison (delete any you don't want as usual).
     """
     if payload.conversation_id is None and not payload.external_id:
         raise HTTPException(
@@ -326,9 +328,9 @@ def retry_answer(
     )
     if msg is None:
         raise HTTPException(status_code=404, detail="Message not found")
-    if msg.role != "assistant":
+    if msg.role not in ("user", "assistant"):
         raise HTTPException(
-            status_code=400, detail="Retry works on assistant answers only"
+            status_code=400, detail="Retry works on questions and answers only"
         )
 
     live = sorted(
@@ -340,19 +342,26 @@ def retry_answer(
     except StopIteration:  # defensive: query above already guarantees it
         raise HTTPException(status_code=404, detail="Message not found")
 
-    # The question this answer belongs to = the closest preceding user message.
-    q_idx = next(
-        (i for i in range(idx - 1, -1, -1) if live[i].role == "user"), None
-    )
-    if q_idx is None:
-        raise HTTPException(
-            status_code=400, detail="No question found before this answer"
+    if msg.role == "user":
+        # Retrying the question itself (e.g. freshly edited): everything up to
+        # and including it is the context.
+        q_idx = idx
+    else:
+        # The question this answer belongs to = the closest preceding user
+        # message.
+        q_idx = next(
+            (i for i in range(idx - 1, -1, -1) if live[i].role == "user"), None
         )
+        if q_idx is None:
+            raise HTTPException(
+                status_code=400, detail="No question found before this answer"
+            )
     question = live[q_idx].content
 
-    # Positioning: insert the new answers between the retried one and whatever
-    # came after it. sort_index values are backfilled from id for old rows, so
-    # there is always a usable gap; renumber defensively when it got too tight.
+    # Positioning: insert the new answers between the anchor message (the
+    # retried answer or the question) and whatever came after it. sort_index
+    # values are backfilled from id for old rows, so there is always a usable
+    # gap; renumber defensively when it got too tight.
     nxt = live[idx + 1] if idx + 1 < len(live) else None
     orig_si = msg.sort_index
     next_si = nxt.sort_index if nxt is not None else None
@@ -389,8 +398,8 @@ def retry_answer(
             responses[item.model] = item
 
             if item.ok and item.content:
-                # Slot between the retried answer and the next message; each
-                # fresh answer gets its own slice of the gap.
+                # Slot between the anchor message and the next one; each fresh
+                # answer gets its own slice of the gap.
                 if next_si is not None:
                     step = (next_si - orig_si) / (len(models) + 1)
                     slot = orig_si + step * (models.index(item.model) + 1)

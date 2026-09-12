@@ -101,6 +101,57 @@ def test_retry_reanswers_in_place_with_context_cutoff(monkeypatch):
     assert by_id[new_id]["model"] == "other/model-b"
 
 
+def test_retry_on_question_reasks_with_context_cutoff(monkeypatch):
+    """🔄 on a QUESTION (e.g. right after editing it): the model sees
+    everything up to and including that question only, and the fresh answers
+    appear directly under the question (old answers kept below for
+    comparison)."""
+    headers = auth_headers()
+    cid, _a1_id, _a2_id, q1_id = _make_dialog(headers)
+
+    captured: dict = {}
+
+    def fake_completion(model, messages, temperature=None, max_tokens=None, reasoning_effort=None):
+        captured["messages"] = messages
+        return {"content": "Paris (re-asked)."}
+
+    from app.routers import chat as chat_router
+
+    monkeypatch.setattr(chat_router, "chat_completion_full", fake_completion)
+
+    resp = client.post(
+        "/api/chat/retry",
+        headers=headers,
+        json={
+            "conversation_id": cid,
+            "message_id": q1_id,
+            "models": ["other/model-b"],
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    assert data["conversation_id"] == cid
+    assert data["source_message_id"] == q1_id
+    assert data["responses"][0]["ok"] is True
+
+    # The model saw ONLY the question (no old answer, no later turns).
+    roles_contents = [(m["role"], m["content"]) for m in captured["messages"]]
+    assert ("user", "What is the capital of France?") in roles_contents
+    assert ("assistant", "Paris.") not in roles_contents
+    assert ("user", "And its population?") not in roles_contents
+
+    # Positional order: fresh answer between the question and the old answer.
+    detail = client.get(f"/api/conversations/{cid}", headers=headers).json()
+    contents = [m["content"] for m in detail["messages"]]
+    assert contents == [
+        "What is the capital of France?",
+        "Paris (re-asked).",
+        "Paris.",
+        "And its population?",
+        "About 2 million.",
+    ]
+
+
 def test_retry_persists_openrouter_metadata(monkeypatch):
     """The retried answer keeps the full per-message OpenRouter metadata
     (provider, generation id, token usage, cost) like a normal send does."""
@@ -261,7 +312,7 @@ def test_retry_failed_model_persists_nothing(monkeypatch):
 
 def test_retry_error_cases():
     headers = auth_headers()
-    cid, a1_id, _a2_id, q1_id = _make_dialog(headers)
+    cid, a1_id, _a2_id, _q1_id = _make_dialog(headers)
 
     # Neither dialog identifier -> 422.
     resp = client.post(
@@ -270,10 +321,14 @@ def test_retry_error_cases():
     )
     assert resp.status_code == 422
 
-    # Retrying a question (not an answer) -> 400.
+    # Retrying a system message -> 400 (questions and answers are retryable).
+    sys_msg = client.post(
+        f"/api/conversations/{cid}/messages", headers=headers,
+        json={"role": "system", "content": "note"},
+    ).json()
     resp = client.post(
         "/api/chat/retry", headers=headers,
-        json={"conversation_id": cid, "message_id": q1_id, "models": ["m"]},
+        json={"conversation_id": cid, "message_id": sys_msg["id"], "models": ["m"]},
     )
     assert resp.status_code == 400
 
