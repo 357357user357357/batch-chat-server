@@ -1115,7 +1115,7 @@ def test_settings_owner_only_and_backup():
     # may replace/delete them; server infrastructure stays owner-only.
     bob_view = client.get("/api/settings", headers=bob)
     assert bob_view.status_code == 200
-    assert set(bob_view.json()) == {"openrouter_api_key", "tavily_api_key"}
+    assert set(bob_view.json()) == {"openrouter_api_key", "custom_api_key", "tavily_api_key"}
     assert client.put(
         "/api/settings", headers=bob, json={"openrouter_api_key": "x"}
     ).status_code == 200

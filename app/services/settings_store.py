@@ -14,6 +14,7 @@ from app.models import AppSetting
 # app.config.Settings — every key here must be a real attribute on `settings`.
 SECRET_FIELDS = [
     "openrouter_api_key",
+    "custom_api_key",
     "tavily_api_key",
     "google_service_account_json",
     "aws_access_key_id",
@@ -24,6 +25,8 @@ PLAIN_FIELDS = [
     "google_project_id",
     "google_location",
     "aws_region",
+    "custom_base_url",
+    "custom_default_model",
     "cache_duration_seconds",
     "cache_keepalive_hours",
 ]

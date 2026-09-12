@@ -336,6 +336,9 @@ class SettingsUpdate(BaseModel):
     """All fields optional — only the ones sent are updated (others untouched)."""
 
     openrouter_api_key: str | None = None
+    custom_api_key: str | None = None
+    custom_base_url: str | None = None
+    custom_default_model: str | None = None
     tavily_api_key: str | None = None
     google_project_id: str | None = None
     google_location: str | None = None
@@ -362,6 +365,9 @@ class SettingsBackup(BaseModel):
     model_config = ConfigDict(extra="allow")
 
     openrouter_api_key: str = ""
+    custom_api_key: str = ""
+    custom_base_url: str = ""
+    custom_default_model: str = ""
     tavily_api_key: str = ""
     google_project_id: str = ""
     google_location: str = ""

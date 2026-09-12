@@ -11,6 +11,13 @@ class Settings(BaseSettings):
     app_password: str = "change-me-please"
     openrouter_api_key: str = ""
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
+
+    # Generic OpenAI-compatible provider (custom gateways/aggregators —
+    # FastRouter, Together, DeepSeek, GLM, vLLM…). Models are addressed in
+    # the UI as "custom:<model>", e.g. "custom:z-ai/glm-5.3-flash".
+    custom_api_key: str = ""
+    custom_base_url: str = ""
+    custom_default_model: str = ""
     database_url: str = "sqlite:///./data/batch_chat.db"
     token_expire_days: int = 30
     port: int = 8000

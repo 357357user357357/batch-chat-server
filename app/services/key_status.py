@@ -18,8 +18,10 @@ from sqlalchemy.orm import Session
 from app.config import settings
 from app.models import AppSetting, utcnow
 
-# Only these two providers have a cheap, free status endpoint today.
-CHECKED_FIELDS = ["openrouter_api_key", "tavily_api_key"]
+# Fields with a cheap, free status endpoint. OpenRouter and Tavily ship
+# dedicated account endpoints; the custom provider checks its whole
+# configured endpoint (key + base URL together) via GET {base_url}/models.
+CHECKED_FIELDS = ["openrouter_api_key", "custom_api_key", "tavily_api_key"]
 
 REQUEST_TIMEOUT = httpx.Timeout(15.0, connect=5.0)
 STATUS_TTL_SECONDS = 10 * 60  # older results are flagged stale in the UI
@@ -137,6 +139,34 @@ def check_tavily_key(key: str) -> dict:
     return {"status": "error", "detail": err}
 
 
+def check_custom_key(key: str) -> dict:
+    """GET {base_url}/models — the OpenAI-compatible model list; 200 = the
+    endpoint answers and the key (if any) is accepted. Checks the whole
+    custom-provider configuration, not just the key."""
+    from app.services import custom_provider
+
+    if not custom_provider.is_configured():
+        return {"status": "not_set", "detail": "No custom base URL saved"}
+    status_code, data, err = _http_check(
+        f"{settings.custom_base_url.strip().rstrip('/')}/models",
+        {"Authorization": f"Bearer {key}"} if key else {},
+    )
+    if status_code == 200 and data is not None:
+        models = data.get("data") if isinstance(data.get("data"), list) else []
+        result: dict = {"status": "valid", "detail": "Endpoint answered"}
+        if models:
+            result["info"] = {"models": len(models)}
+        return result
+    if status_code in (401, 403):
+        return {
+            "status": "invalid",
+            "detail": "Rejected — wrong key for this endpoint",
+        }
+    if status_code:
+        return {"status": "error", "detail": f"Endpoint answered HTTP {status_code}"}
+    return {"status": "error", "detail": err}
+
+
 def check_and_store(db: Session, field: str) -> dict:
     """Validate the currently saved key for `field` and persist the verdict.
 
@@ -146,12 +176,16 @@ def check_and_store(db: Session, field: str) -> dict:
     if field not in CHECKED_FIELDS:
         raise ValueError(f"'{field}' has no provider status check")
     key = getattr(settings, field, "") or ""
-    if not key:
+    # The custom provider may run keyless (e.g. a local Ollama) — only its
+    # base URL decides whether it is configured, so never short-circuit here.
+    if not key and field != "custom_api_key":
         result = {"status": "not_set", "detail": "No key saved"}
     else:
         try:
             if field == "openrouter_api_key":
                 result = check_openrouter_key(key)
+            elif field == "custom_api_key":
+                result = check_custom_key(key)
             else:
                 result = check_tavily_key(key)
         except Exception as exc:  # defensive: a broken check must not break saving

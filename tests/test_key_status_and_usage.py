@@ -370,7 +370,7 @@ def test_client_sees_shared_keys_masked_and_can_replace_them(saved_keys):
     # Client view: only the two provider keys, masked (enough head to tell
     # keys apart) and with the stored provider-check status.
     view = client.get("/api/settings", headers=sub).json()
-    assert set(view) == {"openrouter_api_key", "tavily_api_key"}
+    assert set(view) == {"openrouter_api_key", "custom_api_key", "tavily_api_key"}
     assert view["openrouter_api_key"]["configured"] is True
     assert view["openrouter_api_key"]["hint"].startswith("sk-o")
     assert "…" in view["openrouter_api_key"]["hint"]
@@ -384,7 +384,7 @@ def test_client_sees_shared_keys_masked_and_can_replace_them(saved_keys):
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert body["checked_keys"]["openrouter_api_key"]["status"] == "invalid"
-    assert set(body) == {"openrouter_api_key", "tavily_api_key", "checked_keys"}
+    assert set(body) == {"openrouter_api_key", "custom_api_key", "tavily_api_key", "checked_keys"}
 
     # Everything beyond the two keys stays owner-only.
     assert client.put(

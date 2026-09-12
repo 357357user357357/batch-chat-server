@@ -19,13 +19,13 @@ router = APIRouter(prefix="/api/settings", tags=["settings"])
 
 _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
-SHARED_KEY_FIELDS = ["openrouter_api_key", "tavily_api_key"]
+SHARED_KEY_FIELDS = ["openrouter_api_key", "custom_api_key", "tavily_api_key"]
 
 
 def _shared_view(db: Session) -> dict:
-    """Client-safe snapshot: just the two provider keys (masked + status)."""
+    """Client-safe snapshot: just the shared provider keys (masked + status)."""
     view = current_view(db)
-    return {field: view[field] for field in CHECKED_FIELDS}
+    return {field: view[field] for field in SHARED_KEY_FIELDS}
 
 
 def _is_owner(account_id: str, db: Session) -> bool:
@@ -58,8 +58,13 @@ def update_settings(
     right away, so the UI can show the verdict without a second click."""
     owner = _is_owner(account_id, db)
     updates = payload.model_dump(exclude_unset=True, exclude_none=True)
+    if "custom_base_url" in updates and updates["custom_base_url"]:
+        # Normalize once here so API/backup paths match what the web UI saves.
+        updates["custom_base_url"] = updates["custom_base_url"].strip().rstrip("/")
+        if not updates["custom_base_url"]:
+            del updates["custom_base_url"]
     if not owner:
-        if any(field not in CHECKED_FIELDS for field in updates):
+        if any(field not in SHARED_KEY_FIELDS for field in updates):
             raise HTTPException(
                 status_code=403,
                 detail="Owner account required",
@@ -71,6 +76,11 @@ def update_settings(
     for field in CHECKED_FIELDS:
         if field in updates:
             checked[field] = check_and_store(db, field)
+    if owner and "custom_api_key" not in checked and (
+        "custom_base_url" in updates or "custom_default_model" in updates
+    ):
+        # A pasted custom base URL / default model re-checks the endpoint too.
+        checked["custom_api_key"] = check_and_store(db, "custom_api_key")
     view = current_view(db) if owner else _shared_view(db)
     if checked:
         view["checked_keys"] = checked

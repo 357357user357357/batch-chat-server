@@ -1,0 +1,144 @@
+"""Calls to any OpenAI-compatible provider (no OpenRouter in between).
+
+One catch-all client for the growing zoo of OpenAI-style gateways and
+self-hosted servers: FastRouter, GLM/Z.ai, DeepSeek, Together, Groq,
+OpenAI itself, LM Studio, vLLM — anything speaking `POST {base_url}/
+chat/completions`.
+
+Credentials live in CUSTOM_API_KEY + CUSTOM_BASE_URL (.env or the web
+Settings modal). Models are addressed in the UI as "custom:<model>",
+e.g. "custom:z-ai/glm-5.3-flash".
+
+What is intentionally NOT available through this provider:
+  - reasoning_effort: OpenRouter's unified `reasoning` parameter has no
+    OpenAI-compatible meaning (the JSON schema differs per vendor), so it is
+    not forwarded — requests stay plain chat completions.
+  - Prompt-cache tagging (Anthropic cache_control blocks) and the `usage`
+    include flag are OpenRouter niceties; some compatible servers reject
+    unknown fields, so nothing extra is sent. A "cached" break-down in the
+    response is still surfaced when the vendor happens to return
+    prompt_tokens_details.cached_tokens.
+"""
+
+import httpx
+
+from app.config import settings
+from app.services.provider_errors import ProviderError
+
+REQUEST_TIMEOUT = httpx.Timeout(180.0, connect=15.0)
+
+
+class CustomProviderError(ProviderError):
+    pass
+
+
+def is_configured() -> bool:
+    """True once a base URL is set. The key may legitimately be empty
+    (local LM Studio / vLLM usually run unauthenticated)."""
+    return bool(settings.custom_base_url.strip())
+
+
+def _require_config() -> None:
+    if not is_configured():
+        raise CustomProviderError(
+            "Custom provider is not configured on the server "
+            "(set CUSTOM_BASE_URL — and CUSTOM_API_KEY if the endpoint "
+            "requires one)"
+        )
+
+
+def _headers() -> dict[str, str]:
+    headers = {"Content-Type": "application/json"}
+    key = settings.custom_api_key.strip()
+    if key:
+        headers["Authorization"] = f"Bearer {key}"
+    return headers
+
+
+def chat_completion(
+    model: str,
+    messages: list[dict[str, str]],
+    temperature: float | None = None,
+    max_tokens: int | None = None,
+    reasoning_effort: str | None = None,
+) -> str:
+    """Call one OpenAI-compatible endpoint synchronously. Returns the reply text."""
+    return chat_completion_full(model, messages, temperature, max_tokens)["content"]
+
+
+def chat_completion_full(
+    model: str,
+    messages: list[dict[str, str]],
+    temperature: float | None = None,
+    max_tokens: int | None = None,
+    reasoning_effort: str | None = None,
+) -> dict:
+    """Like chat_completion, but returns a dict — content plus whatever usage
+    metadata the vendor reports (token counts; some also report a cost).
+
+    `reasoning_effort` is accepted for signature compatibility with the other
+    providers but deliberately ignored (see module docstring)."""
+    _require_config()
+    payload: dict = {"model": model, "messages": messages}
+    if temperature is not None:
+        payload["temperature"] = temperature
+    if max_tokens is not None:
+        payload["max_tokens"] = max_tokens
+
+    try:
+        with httpx.Client(timeout=REQUEST_TIMEOUT) as client:
+            resp = client.post(
+                f"{settings.custom_base_url.strip().rstrip('/')}/chat/completions",
+                headers=_headers(),
+                json=payload,
+            )
+            if resp.status_code >= 400:
+                raise CustomProviderError(
+                    f"Custom provider error (HTTP {resp.status_code}): "
+                    f"{_safe_error(resp)}"
+                )
+            data = resp.json()
+    except httpx.HTTPError as exc:
+        raise CustomProviderError(f"Request failed: {exc}") from exc
+
+    try:
+        content = data["choices"][0]["message"]["content"]
+    except (KeyError, IndexError, TypeError) as exc:
+        raise CustomProviderError(
+            f"Unexpected response from the custom provider: {data!r}"
+        ) from exc
+
+    usage = data.get("usage") or {}
+    if not isinstance(usage, dict):
+        usage = {}
+    prompt_details = usage.get("prompt_tokens_details")
+    if not isinstance(prompt_details, dict):
+        prompt_details = {}
+    return {
+        "content": content,
+        "provider": data.get("provider"),
+        "gen_id": data.get("id"),
+        "tokens_prompt": usage.get("prompt_tokens"),
+        "tokens_cached": prompt_details.get("cached_tokens"),
+        "tokens_completion": usage.get("completion_tokens"),
+        "total_tokens": usage.get("total_tokens"),
+        "cost": usage.get("cost"),
+    }
+
+
+def _safe_error(resp: httpx.Response) -> str:
+    """Surface the human-readable `error.message` when the vendor follows the
+    OpenAI error shape; otherwise return the raw body head."""
+    try:
+        data = resp.json()
+    except Exception:
+        return resp.text[:300]
+    if isinstance(data, dict):
+        error = data.get("error")
+        if isinstance(error, dict):
+            message = error.get("message")
+            if message:
+                return str(message)
+        if isinstance(error, str):
+            return error
+    return str(data)[:300]

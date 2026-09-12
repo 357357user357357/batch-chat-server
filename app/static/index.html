@@ -179,6 +179,31 @@
         Enables the "Web search" toggle in the chat (internet lookups).
       </p>
 
+      <label class="modal-field">
+        Custom provider API key <span id="settings-custom-hint" class="settings-hint"></span>
+        <input id="settings-custom-key" type="password" placeholder="sk-… (leave empty for keyless servers like Ollama)" autocomplete="off" />
+      </label>
+      <label class="modal-field">
+        Custom provider base URL
+        <input id="settings-custom-url" type="url" placeholder="https://api.fastrouter.ai/v1" autocomplete="off" spellcheck="false" />
+      </label>
+      <label class="modal-field">
+        Custom default model
+        <input id="settings-custom-model" type="text" placeholder="z-ai/glm-5.3-flash" autocomplete="off" spellcheck="false" />
+      </label>
+      <div class="key-status-row">
+        <span id="key-status-custom" class="key-status"></span>
+        <span class="key-status-actions">
+          <button id="key-delete-custom" class="btn btn-ghost btn-small" title="Remove the saved key from the server">🗑 Delete key</button>
+        </span>
+      </div>
+      <p class="modal-hint">
+        Any OpenAI-compatible gateway — FastRouter, GLM/Z.ai, DeepSeek,
+        Together, OpenAI itself, or a local Ollama/vLLM (keyless: base URL
+        only). Models appear as <code>custom:&lt;model&gt;</code> in the picker;
+        the default model is pinned to the top when set.
+      </p>
+
       <p class="modal-hint" style="margin-top:8px">
         <a href="#" id="usage-open-link">📈 Prompt token caching usage</a> — see
         how much of your prompt traffic hits OpenRouter's cache.

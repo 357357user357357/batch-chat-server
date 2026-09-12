@@ -120,6 +120,12 @@ const els = {
   keyDeleteOpenrouter: $("#key-delete-openrouter"),
   keyStatusTavily: $("#key-status-tavily"),
   keyDeleteTavily: $("#key-delete-tavily"),
+  keyStatusCustom: $("#key-status-custom"),
+  keyDeleteCustom: $("#key-delete-custom"),
+  settingsCustomKey: $("#settings-custom-key"),
+  settingsCustomHint: $("#settings-custom-hint"),
+  settingsCustomUrl: $("#settings-custom-url"),
+  settingsCustomModel: $("#settings-custom-model"),
   usageOpenLink: $("#usage-open-link"),
   usageBtn: $("#usage-btn"),
   usageModal: $("#usage-modal"),
@@ -1772,8 +1778,17 @@ async function loadSettings() {
       ? `(saved: ${data.openrouter_api_key.hint})` : "(not set)";
     els.settingsTavilyHint.textContent = data.tavily_api_key.configured
       ? `(saved: ${data.tavily_api_key.hint})` : "(not set)";
+    els.settingsCustomHint.textContent = data.custom_api_key.configured
+      ? `(saved: ${data.custom_api_key.hint})` : "(not set)";
+    els.settingsCustomUrl.value = data.custom_base_url.value || "";
+    els.settingsCustomUrl.placeholder = data.custom_base_url.value
+      ? data.custom_base_url.value : "https://api.fastrouter.ai/v1";
+    els.settingsCustomModel.value = data.custom_default_model.value || "";
+    els.settingsCustomModel.placeholder = data.custom_default_model.value
+      ? data.custom_default_model.value : "z-ai/glm-5.3-flash";
     renderKeyStatus(els.keyStatusOpenrouter, data.openrouter_api_key.status);
     renderKeyStatus(els.keyStatusTavily, data.tavily_api_key.status);
+    renderKeyStatus(els.keyStatusCustom, data.custom_api_key.status);
     if (settingsIsOwner) {
       const cacheSeconds = data.cache_duration_seconds && data.cache_duration_seconds.value;
       if (cacheSeconds) els.settingsCacheDuration.value = String(cacheSeconds);
@@ -1831,7 +1846,12 @@ function renderKeyStatus(el, status) {
 }
 
 async function deleteKey(field, btn) {
-  if (!confirm(`Delete the saved ${field === "tavily_api_key" ? "Tavily" : "OpenRouter"} key from the server?\n\nChatting (or web search) without it will fail until a new key is pasted.`)) {
+  const keyNames = {
+    openrouter_api_key: "OpenRouter",
+    tavily_api_key: "Tavily",
+    custom_api_key: "Custom provider",
+  };
+  if (!confirm(`Delete the saved ${keyNames[field] || field} key from the server?\n\nChatting (or web search) through it will fail until a new key is pasted.`)) {
     return;
   }
   btn.disabled = true;
@@ -1851,6 +1871,8 @@ els.keyDeleteOpenrouter.addEventListener("click", () =>
   deleteKey("openrouter_api_key", els.keyDeleteOpenrouter));
 els.keyDeleteTavily.addEventListener("click", () =>
   deleteKey("tavily_api_key", els.keyDeleteTavily));
+els.keyDeleteCustom.addEventListener("click", () =>
+  deleteKey("custom_api_key", els.keyDeleteCustom));
 
 els.ownerEmailSave.addEventListener("click", async () => {
   const email = els.settingsOwnerEmail.value.trim();
@@ -1883,6 +1905,13 @@ els.settingsSubmit.addEventListener("click", async () => {
   };
   maybeAdd("openrouter_api_key", els.settingsOpenrouterKey.value);
   maybeAdd("tavily_api_key", els.settingsTavilyKey.value);
+  maybeAdd("custom_api_key", els.settingsCustomKey.value);
+  {
+    const customUrl = els.settingsCustomUrl.value.trim().replace(/\/+$/, "");
+    if (customUrl) body.custom_base_url = customUrl;
+    const customModel = els.settingsCustomModel.value.trim();
+    if (customModel) body.custom_default_model = customModel;
+  }
   if (settingsIsOwner) {
     maybeAdd("google_project_id", els.settingsGoogleProject.value);
     maybeAdd("google_location", els.settingsGoogleLocation.value);
@@ -1910,13 +1939,19 @@ els.settingsSubmit.addEventListener("click", async () => {
     });
     els.settingsOpenrouterKey.value = "";
     els.settingsTavilyKey.value = "";
+    els.settingsCustomKey.value = "";
     els.settingsGoogleJson.value = "";
     els.settingsAwsKey.value = "";
     els.settingsAwsSecret.value = "";
     els.settingsStatus.classList.add("ok");
+    const keyLabels = {
+      openrouter_api_key: "OpenRouter",
+      tavily_api_key: "Tavily",
+      custom_api_key: "Custom provider",
+    };
     const verdicts = Object.entries(saved.checked_keys || {})
       .map(([field, st]) =>
-        `${field === "tavily_api_key" ? "Tavily" : "OpenRouter"} key: ${
+        `${keyLabels[field] || field} key: ${
           st.status === "valid" ? "✓ valid" :
           st.status === "invalid" ? "✕ rejected by provider" :
           st.status === "not_set" ? "cleared" : `⚠ ${st.detail}`
