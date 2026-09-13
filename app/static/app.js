@@ -90,6 +90,7 @@ const els = {
   retryCancel: $("#retry-cancel"),
   menuBtn: $("#menu-btn"),
   menuPopover: $("#menu-popover"),
+  syncBtn: $("#sync-btn"),
   cacheBtn: $("#cache-btn"),
   reasoningSelect: $("#reasoning-select"),
   settingsBtn: $("#settings-btn"),
@@ -1701,6 +1702,19 @@ async function syncNow() {
     console.warn("Auto-sync failed:", err.message);
   }
 }
+
+// 🔄 Manual sync — the same refresh as the auto-sync, on demand from the
+// ☰ Menu (next to ⚙ Settings).
+els.syncBtn.addEventListener("click", async () => {
+  els.syncBtn.disabled = true;
+  els.syncBtn.textContent = "⏳ Syncing…";
+  try {
+    await syncNow();
+  } finally {
+    els.syncBtn.disabled = false;
+    els.syncBtn.textContent = "🔄 Sync";
+  }
+});
 
 // ---------------------------------------------------------------
 // 🔥 Cache keep-alive toggle (per open dialog, opt-in)
