@@ -1704,15 +1704,23 @@ async function syncNow() {
 }
 
 // 🔄 Manual sync — the same refresh as the auto-sync, on demand from the
-// ☰ Menu (next to ⚙ Settings).
+// ☰ Menu (next to ⚙ Settings). Reports the outcome on the button itself:
+// "✅ Synced · N dialogs" on success, "⚠ Sync failed" + the error otherwise.
 els.syncBtn.addEventListener("click", async () => {
   els.syncBtn.disabled = true;
   els.syncBtn.textContent = "⏳ Syncing…";
   try {
     await syncNow();
+    const n = state.conversations.length;
+    els.syncBtn.textContent = `✅ Synced · ${n} dialog${n === 1 ? "" : "s"}`;
+  } catch (err) {
+    els.syncBtn.textContent = "⚠ Sync failed";
+    alert(`Sync failed: ${err.message}`);
   } finally {
-    els.syncBtn.disabled = false;
-    els.syncBtn.textContent = "🔄 Sync";
+    setTimeout(() => {
+      els.syncBtn.disabled = false;
+      els.syncBtn.textContent = "🔄 Sync";
+    }, 2500);
   }
 });
 
