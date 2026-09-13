@@ -46,6 +46,13 @@ your own cloud billing) by prefixing the model name in the "Models" picker
 | *(none)* + `:flex` | `openai/gpt-6-astra:flex` — Flex processing tier (`service_tier="flex"`, cheaper/slower); auto-falls-back to standard tier when the provider rejects it | `OPENROUTER_API_KEY` |
 | `vertex:` | `vertex:gemini-2.5-flash`, `vertex:claude-sonnet-4-5@20250929` | `GOOGLE_PROJECT_ID` + service-account key |
 | `bedrock:` | `bedrock:anthropic.claude-3-5-sonnet-20241022-v2:0` | `AWS_ACCESS_KEY_ID` + `AWS_SECRET_ACCESS_KEY` |
+| `custom:` | `custom:z-ai/glm-5.3-flash` | `CUSTOM_BASE_URL` (+ `CUSTOM_API_KEY` if the gateway needs one) |
+
+The `custom:` prefix talks to **any OpenAI-compatible gateway** — FastRouter,
+a self-hosted vLLM/Ollama/LM Studio, you name it. When `CUSTOM_BASE_URL` is
+set, that gateway's model catalog appears in the picker alongside OpenRouter's
+(with `custom:` prefixed ids, search and pricing included), and
+`CUSTOM_DEFAULT_MODEL` (optional) is prepended to the default list.
 
 See `.env.example` for exact steps to obtain each credential. `GET /api/health`
 reports which providers are currently configured (`vertex_configured`,

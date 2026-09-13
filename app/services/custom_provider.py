@@ -21,11 +21,17 @@ What is intentionally NOT available through this provider:
 """
 
 import httpx
+import time
 
 from app.config import settings
 from app.services.provider_errors import ProviderError
 
 REQUEST_TIMEOUT = httpx.Timeout(180.0, connect=15.0)
+
+# Picker catalog cache (same pattern as openrouter.py): refreshed hourly so
+# changing the provider settings takes effect without a restart.
+_CATALOG_TTL_SECONDS = 3600
+_CATALOG_CACHE: dict = {"data": None, "ts": 0.0}
 
 
 class CustomProviderError(ProviderError):
@@ -142,3 +148,63 @@ def _safe_error(resp: httpx.Response) -> str:
         if isinstance(error, str):
             return error
     return str(data)[:300]
+
+
+def fetch_custom_catalog() -> list[dict]:
+    """The custom provider's model catalog for the picker's search, in the
+    same shape as OpenRouter's (`id, name, created, context_length, prompt,
+    completion`). Most OpenAI-compatible gateways (FastRouter, OpenRouter
+    itself) speak the OpenRouter schema — prices as strings, sometimes blank —
+    and bare ones (LM Studio, Ollama, vLLM) return only `{"id"}` entries; the
+    mapping stays tolerant to both. Models come back WITHOUT the "custom:"
+    prefix (the caller adds it), like every other provider's raw ids.
+
+    Never raises — on any failure it returns whatever was cached last
+    (possibly [])."""
+    now = time.time()
+    cached = _CATALOG_CACHE["data"]
+    if cached is not None and now - _CATALOG_CACHE["ts"] < _CATALOG_TTL_SECONDS:
+        return cached
+    if not is_configured():
+        return cached or []
+    try:
+        resp = httpx.get(
+            f"{settings.custom_base_url.strip().rstrip('/')}/models",
+            headers=_headers(),
+            timeout=httpx.Timeout(15.0, connect=5.0),
+        )
+        resp.raise_for_status()
+        entries = resp.json().get("data", [])
+        if not isinstance(entries, list):
+            entries = []
+    except Exception:
+        return cached or []
+    catalog: list[dict] = []
+    for entry in entries:
+        if not isinstance(entry, dict) or not entry.get("id"):
+            continue
+        pricing = entry.get("pricing")
+        if not isinstance(pricing, dict):
+            pricing = {}
+
+        def _price(field: str) -> float:
+            # Blank / missing / non-numeric (common) → 0, like OpenRouter's
+            # free-tier entries.
+            try:
+                return max(0.0, float(pricing.get(field) or 0))
+            except (TypeError, ValueError):
+                return 0.0
+
+        catalog.append(
+            {
+                "id": entry["id"],
+                "name": entry.get("name") or entry["id"],
+                "created": entry.get("created"),
+                "context_length": entry.get("context_length"),
+                "prompt": _price("prompt"),
+                "completion": _price("completion"),
+            }
+        )
+    _CATALOG_CACHE["data"] = catalog
+    _CATALOG_CACHE["ts"] = now
+    return catalog

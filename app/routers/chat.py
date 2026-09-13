@@ -24,7 +24,7 @@ from app.services.providers import (
     chat_completion_full,
     default_models,
 )
-from app.services import openrouter
+from app.services import custom_provider, openrouter
 from app.models import live_message_sort_key, next_sort_index
 
 router = APIRouter(prefix="/api/chat", tags=["chat"])
@@ -157,8 +157,19 @@ def all_models(account_id: str = Depends(get_account_id)) -> dict:
     """The provider's FULL model catalog for the picker's search + "all
     models" list (id, display name, release date, context, per-token pricing).
     Signed-in accounts only — the catalog is public data, but this stays
-    behind auth like every other user-facing endpoint."""
-    return {"models": openrouter.fetch_model_catalog()}
+    behind auth like every other user-facing endpoint.
+
+    When the custom provider is configured, its gateway's catalog is appended
+    with every id prefixed "custom:" so picking one dispatches there."""
+    models = openrouter.fetch_model_catalog()
+    try:
+        models = models + [
+            {**entry, "id": f"custom:{entry['id']}"}
+            for entry in custom_provider.fetch_custom_catalog()
+        ]
+    except Exception:
+        pass  # picker must keep working even if the gateway misbehaves
+    return {"models": models}
 
 
 @router.post("/send", response_model=ChatResponse)
