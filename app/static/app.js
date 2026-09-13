@@ -28,6 +28,11 @@ const state = {
     : "",
   modelCatalog: [],
   modelCatalogLoaded: false,
+  // RikkaHub-style message branching: per-dialog selected variant of each
+  // answer group ("12:345" -> variant index). Persisted in localStorage.
+  branchSel: JSON.parse(localStorage.getItem("bc_branches") || "{}"),
+  // The open dialog's flat message list — the source for branch grouping.
+  currentMessages: [],
 };
 
 const els = {
@@ -732,6 +737,7 @@ els.newChatBtn.addEventListener("click", async () => {
   els.chatTitle.textContent = conv.title;
   els.messages.innerHTML = "";
   state.currentConversationId = conv.id;
+  state.currentMessages = []; // new dialog: start with an empty flat list
   updateHeaderControls(); // new dialog: reasoning + cache controls appear
   els.cacheBtn.classList.remove("active"); // new dialog: warming starts OFF
   els.chatInput.focus();
@@ -740,10 +746,116 @@ els.newChatBtn.addEventListener("click", async () => {
 // ---------------------------------------------------------------
 // Messages rendering
 // ---------------------------------------------------------------
+/** Group a flat message list for RikkaHub-style branching: consecutive
+ * assistant answers form one answer group (variants of the same question);
+ * everything else renders as its own node. Pure — unit-testable. */
+function groupAnswerNodes(messages) {
+  const nodes = [];
+  let i = 0;
+  while (i < messages.length) {
+    if (messages[i].role !== "assistant") {
+      nodes.push({ type: "single", msg: messages[i] });
+      i += 1;
+      continue;
+    }
+    const start = i;
+    while (i < messages.length && messages[i].role === "assistant") i += 1;
+    const variants = messages.slice(start, i);
+    nodes.push(
+      variants.length === 1
+        ? { type: "single", msg: variants[0] }
+        : { type: "branch", variants },
+    );
+  }
+  return nodes;
+}
+
 function renderMessages(messages) {
+  state.currentMessages = messages;
   els.messages.innerHTML = "";
-  messages.forEach((msg) => appendMessage(msg));
+  // RikkaHub-style branching: consecutive assistant answers that follow one
+  // question are VARIANTS of the same answer group — only the selected one
+  // shows, with ‹ N/M › arrows to flip between them (all variants stay in
+  // the DB and sync to the phone exactly as before).
+  for (const node of groupAnswerNodes(messages)) {
+    if (node.type === "single") appendMessage(node.msg);
+    else renderBranchNode(node.variants);
+  }
   scrollToBottom();
+}
+
+/** Key identifying an answer group: the question's id when present, else the
+ * first variant's id (question deleted on another device). */
+function branchNodeKey(convId, variants) {
+  return `${convId}:${variants[0].id ?? variants[0].content?.slice(0, 40) ?? ""}`;
+}
+
+function branchSelectedIndex(key, count) {
+  const saved = state.branchSel[key];
+  // Default to the NEWEST variant (RikkaHub shows the latest answer first).
+  const idx = Number.isInteger(saved) && saved >= 0 && saved < count ? saved : count - 1;
+  return idx;
+}
+
+function saveBranchSelection() {
+  // Keep the map bounded: newest 200 entries are enough context.
+  const keys = Object.keys(state.branchSel);
+  if (keys.length > 200) {
+    for (const k of keys.slice(0, keys.length - 200)) delete state.branchSel[k];
+  }
+  localStorage.setItem("bc_branches", JSON.stringify(state.branchSel));
+}
+
+/** One answer group with several variants: wrapper div with the active
+ * bubble inside plus the RikkaHub ‹ N/M › selector under it. */
+function renderBranchNode(variants) {
+  const convId = state.currentConversationId;
+  const key = branchNodeKey(convId, variants);
+  const idx = branchSelectedIndex(key, variants.length);
+
+  const wrap = document.createElement("div");
+  wrap.className = "branch-node";
+  wrap.dataset.branchKey = key;
+
+  const bubble = appendMessage(variants[idx], { parent: wrap });
+  bubble.classList.add("branch-bubble");
+
+  const selector = document.createElement("div");
+  selector.className = "branch-selector";
+  const prev = document.createElement("button");
+  prev.type = "button";
+  prev.className = "branch-btn";
+  prev.title = "Previous variant";
+  prev.textContent = "‹";
+  prev.disabled = idx === 0;
+  const counter = document.createElement("span");
+  counter.className = "branch-counter";
+  counter.textContent = `${idx + 1}/${variants.length}`;
+  const next = document.createElement("button");
+  next.type = "button";
+  next.className = "branch-btn";
+  next.title = "Next variant";
+  next.textContent = "›";
+  next.disabled = idx === variants.length - 1;
+
+  const flip = (delta) => {
+    const cur = branchSelectedIndex(key, variants.length);
+    const target = Math.min(variants.length - 1, Math.max(0, cur + delta));
+    if (target === cur) return;
+    state.branchSel[key] = target;
+    saveBranchSelection();
+    // Re-render just this group in place: build the new wrapper (it lands at
+    // the list end) and move it into the old wrapper's slot, keeping scroll.
+    const rebuilt = renderBranchNode(variants);
+    wrap.replaceWith(rebuilt);
+  };
+  prev.addEventListener("click", () => flip(-1));
+  next.addEventListener("click", () => flip(1));
+
+  selector.append(prev, counter, next);
+  wrap.appendChild(selector);
+  els.messages.appendChild(wrap);
+  return wrap;
 }
 
 // ---------------------------------------------------------------
@@ -926,6 +1038,9 @@ function appendMessage(msg, opts = {}) {
     // 🔄 Retry: the fresh answers appear right after the retried one.
     opts.afterNode.after(div);
     div.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  } else if (opts.parent) {
+    // Branch node wrapper: the bubble renders inside the group container.
+    opts.parent.appendChild(div);
   } else {
     els.messages.appendChild(div);
     scrollToBottom();
@@ -946,7 +1061,15 @@ async function deleteMessage(msg, node) {  if (!msg.id || !state.currentConversa
     await api(`/api/conversations/${state.currentConversationId}/messages/${msg.id}`, {
       method: "DELETE",
     });
-    node.remove();
+    // Keep the flat list in sync and re-render grouped — deleting one variant
+    // of a branch group must also drop it from the ‹ N/M › selector.
+    const pos = state.currentMessages.findIndex((m) => m.id === msg.id);
+    if (pos !== -1) {
+      state.currentMessages.splice(pos, 1);
+      renderMessages(state.currentMessages);
+    } else {
+      node.remove();
+    }
     const conv = state.conversations.find((c) => c.id === state.currentConversationId);
     if (conv && typeof conv.message_count === "number") {
       conv.message_count = Math.max(0, conv.message_count - 1);
@@ -1065,30 +1188,70 @@ async function retryMessage(msg, btn, node) {
           : {}),
       }),
     });
-    // Insert every returned answer right after the retried one, in order.
-    let anchor = node;
-    resp.responses.forEach((r) => {
-      if (!anchor) return;
-      let inserted = null;
-      if (r.ok) {
-        inserted = appendMessage({
-          id: r.message_id ?? null,
-          role: "assistant",
-          content: r.content,
-          model: r.model,
-          reasoning: r.reasoning,
-          provider: r.provider,
-          gen_id: r.gen_id,
-          tokens_prompt: r.tokens_prompt,
-          tokens_completion: r.tokens_completion,
-          total_tokens: r.total_tokens,
-          cost: r.cost,
-        }, { afterNode: anchor });
-      } else {
-        inserted = appendError(r.model, r.error, anchor);
+    // RikkaHub-style: fresh answers become new VARIANTS of the answer group
+    // — update the flat message list at the anchor's position and re-render
+    // grouped (the group selector flips between old and new answers).
+    if (state.currentMessages.length && msg.id) {
+      let anchorPos = state.currentMessages.findIndex((m) => m.id === msg.id);
+      if (anchorPos === -1) anchorPos = state.currentMessages.length - 1;
+      // Skip past any assistant variants already sitting after the anchor.
+      let insertPos = anchorPos + 1;
+      while (
+        insertPos < state.currentMessages.length &&
+        state.currentMessages[insertPos].role === "assistant"
+      ) insertPos += 1;
+      const fresh = [];
+      resp.responses.forEach((r) => {
+        if (r.ok) {
+          fresh.push({
+            id: r.message_id ?? null,
+            role: "assistant",
+            content: r.content,
+            model: r.model,
+            reasoning: r.reasoning,
+            provider: r.provider,
+            gen_id: r.gen_id,
+            tokens_prompt: r.tokens_prompt,
+            tokens_completion: r.tokens_completion,
+            total_tokens: r.total_tokens,
+            cost: r.cost,
+          });
+        } else {
+          fresh.push({ id: null, role: "assistant", content: `⚠ ${r.error}`, model: r.model });
+        }
+      });
+      if (fresh.length) {
+        state.currentMessages.splice(insertPos, 0, ...fresh);
+        renderMessages(state.currentMessages);
+        const anchorEl = els.messages.querySelector(`[data-message-id="${msg.id}"]`);
+        if (anchorEl) anchorEl.scrollIntoView({ block: "nearest", behavior: "smooth" });
       }
-      if (inserted) anchor = inserted;
-    });
+    } else {
+      // No open flat list (defensive): fall back to appending after the node.
+      let anchor = node;
+      resp.responses.forEach((r) => {
+        if (!anchor) return;
+        let inserted = null;
+        if (r.ok) {
+          inserted = appendMessage({
+            id: r.message_id ?? null,
+            role: "assistant",
+            content: r.content,
+            model: r.model,
+            reasoning: r.reasoning,
+            provider: r.provider,
+            gen_id: r.gen_id,
+            tokens_prompt: r.tokens_prompt,
+            tokens_completion: r.tokens_completion,
+            total_tokens: r.total_tokens,
+            cost: r.cost,
+          }, { afterNode: anchor });
+        } else {
+          inserted = appendError(r.model, r.error, anchor);
+        }
+        if (inserted) anchor = inserted;
+      });
+    }
     const conv = state.conversations.find((c) => c.id === state.currentConversationId);
     if (conv) {
       const added = resp.responses.filter((r) => r.ok).length;
@@ -1478,9 +1641,11 @@ els.chatForm.addEventListener("submit", async (e) => {
     state.currentConversationId = resp.conversation_id;
     els.chatInput.value = "";
 
-    appendMessage({ ...resp.user_message, webSearch: resp.web_search_used === true });
-    resp.responses.forEach((r) => {
-      if (r.ok) appendMessage({
+    // RikkaHub-style grouping: parallel answers to one question become
+    // variants of a single answer group (‹ N/M › selector flips between them).
+    const sentQuestion = { ...resp.user_message, webSearch: resp.web_search_used === true };
+    const sentAnswers = resp.responses.map((r) => r.ok
+      ? {
         id: r.message_id ?? null,
         role: "assistant",
         content: r.content,
@@ -1492,9 +1657,10 @@ els.chatForm.addEventListener("submit", async (e) => {
         tokens_completion: r.tokens_completion,
         total_tokens: r.total_tokens,
         cost: r.cost,
-      });
-      else appendError(r.model, r.error);
-    });
+      }
+      : { id: null, role: "assistant", content: `⚠ ${r.error}`, model: r.model });
+    state.currentMessages = [...state.currentMessages, sentQuestion, ...sentAnswers];
+    renderMessages(state.currentMessages);
     await syncNow(); // every message syncs immediately (dialog list + open conversation)
   } catch (err) {
     appendError(models.join(", "), err.message);
