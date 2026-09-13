@@ -28,6 +28,13 @@ const state = {
     : "",
   modelCatalog: [],
   modelCatalogLoaded: false,
+  // Retry picker: open modal context ({msg, btn, node, models:Set}) + filter
+  // query + persisted sort ("picked" | "new" | "output").
+  retryCtx: null,
+  retryModelSearchQuery: "",
+  retryModelSort: ["new", "output"].includes(localStorage.getItem("bc_retry_sort"))
+    ? localStorage.getItem("bc_retry_sort")
+    : "picked",
   // RikkaHub-style message branching: per-dialog selected variant of each
   // answer group ("12:345" -> variant index). Persisted in localStorage.
   branchSel: JSON.parse(localStorage.getItem("bc_branches") || "{}"),
@@ -73,6 +80,14 @@ const els = {
   modelCheckboxes: $("#model-checkboxes"),
   customModelInput: $("#custom-model-input"),
   addModelBtn: $("#add-model-btn"),
+  retryModal: $("#retry-modal"),
+  retryModalTitle: $("#retry-modal-title"),
+  retryModelSearch: $("#retry-model-search"),
+  retryModelSort: $("#retry-model-sort"),
+  retryModelList: $("#retry-model-list"),
+  retryGo: $("#retry-go"),
+  retryClose: $("#retry-close"),
+  retryCancel: $("#retry-cancel"),
   menuBtn: $("#menu-btn"),
   menuPopover: $("#menu-popover"),
   cacheBtn: $("#cache-btn"),
@@ -1151,28 +1166,156 @@ async function editMessage(msg, node) {
 }
 
 /** 🔄 Re-answer one assistant reply — or re-ask one question — with other
- * model(s): asks for the model id(s) (comma-separate to compare several),
- * POSTs /api/chat/retry and inserts the fresh answers right after the anchor
- * message. Old answers are kept — delete any you don't want as usual. */
+ * model(s): opens the retry model picker (searchable catalog, multi-select
+ * to compare answers as variants), then POSTs /api/chat/retry via doRetry.
+ * Old answers are kept — flip between variants or delete any you don't want. */
 async function retryMessage(msg, btn, node) {
   if (!msg.id || !state.currentConversationId) {
     alert("This message has no id yet — reopen the conversation and try again.");
     return;
   }
+  // RikkaHub-style model picker instead of a bare prompt(): searchable
+  // catalog, multi-select to compare answers side-by-side as variants.
   const fallback = msg.model
     || state.liveModel
     || (state.selectedModels || [])[0]
     || "";
-  const input = prompt(
-    msg.role === "user"
-      ? "Re-ask this question with model(s) — comma-separate several (e.g. openai/gpt-4o-mini, deepseek/deepseek-chat):"
-      : "Re-answer with model(s) — comma-separate several (e.g. openai/gpt-4o-mini, deepseek/deepseek-chat):",
-    fallback,
-  );
-  if (input === null) return;
-  const models = input.split(",").map((s) => s.trim()).filter(Boolean).slice(0, 20);
-  if (!models.length) return;
+  state.retryCtx = { msg, btn, node, models: new Set(fallback ? [fallback] : []) };
+  els.retryModalTitle.textContent = msg.role === "user" ? "🔄 Re-ask with…" : "🔄 Re-answer with…";
+  state.retryModelSearchQuery = "";
+  els.retryModelSearch.value = "";
+  els.retryModelSort.value = state.retryModelSort;
+  renderRetryModelRows();
+  els.retryModal.classList.remove("hidden");
+  els.retryModelSearch.focus();
+  // The provider's full catalog arrives async (cached after the first open).
+  loadModelCatalog().then(renderRetryModelRows);
+}
 
+function closeRetryPicker() {
+  els.retryModal.classList.add("hidden");
+  state.retryCtx = null;
+}
+
+// Row list for the retry picker: picked models + typed-letter grep over the
+// provider's full catalog (same search feel as the header model picker).
+function renderRetryModelRows() {
+  els.retryModelList.innerHTML = "";
+  if (!state.retryCtx) return;
+  const query = (state.retryModelSearchQuery || "").trim().toLowerCase();
+  let shown = 0;
+  const listedIds = new Set();
+
+  const addRow = (id, name, price) => {
+    // ":batch" ids are async-only — they can't answer a retry request.
+    if (id.endsWith(":batch")) return;
+    listedIds.add(id);
+    const label = document.createElement("label");
+    label.className = "model-check";
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.checked = state.retryCtx.models.has(id);
+    cb.addEventListener("change", () => {
+      if (cb.checked) state.retryCtx.models.add(id);
+      else state.retryCtx.models.delete(id);
+      els.retryGo.disabled = state.retryCtx.models.size === 0;
+    });
+    const text = document.createElement("span");
+    text.textContent = name;
+    text.title = id;
+    label.append(cb, text);
+    if (price) {
+      const span = document.createElement("span");
+      span.className = "model-price";
+      span.title = "USD per 1M tokens (prompt / completion) — standard tier";
+      span.textContent = `· $${fmtPrice(price.prompt)} / $${fmtPrice(price.completion)} /1M`;
+      label.append(span);
+    }
+    shown++;
+    els.retryModelList.appendChild(label);
+  };
+
+  const matches = (m) =>
+    !query || `${m.id} ${m.name || ""}`.toLowerCase().includes(query);
+
+  const retrySort = els.retryModelSort.value;
+  if (retrySort === "new" || retrySort === "output") {
+    const rows = state.modelCatalog
+      .filter(matches)
+      .sort(
+        retrySort === "new"
+          ? (a, b) => (b.created || 0) - (a.created || 0) || a.id.localeCompare(b.id)
+          : (a, b) => a.completion - b.completion || a.prompt - b.prompt || a.id.localeCompare(b.id),
+      );
+    rows.slice(0, MODEL_ROW_CAP).forEach((m) => addRow(m.id, m.name || m.id, m));
+    if (rows.length > MODEL_ROW_CAP) {
+      const note = document.createElement("div");
+      note.className = "model-search-empty";
+      note.textContent = `Showing the first ${MODEL_ROW_CAP} of ${rows.length} — type to narrow it down.`;
+      els.retryModelList.appendChild(note);
+    }
+  } else {
+    (state.defaultModels || []).forEach((model) => {
+      if (query && !model.toLowerCase().includes(query)) return;
+      addRow(model, model, modePrice(model) || undefined);
+    });
+    if (query && state.modelCatalog.length) {
+      state.modelCatalog
+        .filter((m) => !listedIds.has(m.id) && matches(m))
+        .slice(0, 60)
+        .forEach((m) => addRow(m.id, m.name || m.id, m));
+    }
+  }
+
+  // Typed something that isn't an exact catalog id? Offer it as a raw id.
+  if (query && !listedIds.has(state.retryModelSearchQuery.trim())) {
+    addRow(state.retryModelSearchQuery.trim(), `Use "${state.retryModelSearchQuery.trim()}" as a custom model id`);
+  }
+
+  if (!shown) {
+    const none = document.createElement("div");
+    none.className = "model-search-empty";
+    none.textContent = "No models available.";
+    els.retryModelList.appendChild(none);
+  }
+  els.retryGo.disabled = state.retryCtx.models.size === 0;
+}
+
+els.retryModelSearch.addEventListener("input", () => {
+  state.retryModelSearchQuery = els.retryModelSearch.value;
+  renderRetryModelRows();
+});
+els.retryModelSort.addEventListener("change", () => {
+  state.retryModelSort = els.retryModelSort.value;
+  localStorage.setItem("bc_retry_sort", state.retryModelSort);
+  loadModelCatalog().then(renderRetryModelRows);
+});
+// Enter in the search box checks the first visible row.
+els.retryModelSearch.addEventListener("keydown", (e) => {
+  if (e.key !== "Enter") return;
+  e.preventDefault();
+  const first = els.retryModelList.querySelector("input[type=checkbox]");
+  if (first) {
+    first.checked = true;
+    first.dispatchEvent(new Event("change"));
+  }
+});
+els.retryClose.addEventListener("click", closeRetryPicker);
+els.retryCancel.addEventListener("click", closeRetryPicker);
+els.retryModal.addEventListener("click", (e) => {
+  if (e.target === els.retryModal) closeRetryPicker();
+});
+els.retryGo.addEventListener("click", () => {
+  if (!state.retryCtx) return;
+  const models = [...state.retryCtx.models].slice(0, 20);
+  if (!models.length) return;
+  const { msg, btn, node } = state.retryCtx;
+  closeRetryPicker();
+  doRetry(msg, models, btn, node);
+});
+
+/** The actual retry POST + variant insertion, shared by the picker flow. */
+async function doRetry(msg, models, btn, node) {
   const original = btn.textContent;
   btn.disabled = true;
   btn.textContent = "Retrying…";

@@ -560,6 +560,15 @@ input:focus, textarea:focus { outline: 2px solid var(--accent); outline-offset: 
 .model-custom { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--text-muted); margin-top: 10px; }
 .model-custom input { margin-top: 4px; }
 
+/* Retry picker modal: scrollable model list */
+.retry-model-list {
+  max-height: 45vh;
+  overflow-y: auto;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  padding: 6px 2px;
+}
+
 /* ---------- Modals (meta / settings / usage) ---------- */
 .modal-overlay {
   position: fixed;

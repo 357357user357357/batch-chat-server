@@ -129,6 +129,28 @@
     </div>
   </div>
 
+  <!-- Retry model picker (pick model(s) for 🔄 Retry) -->
+  <div id="retry-modal" class="modal-overlay hidden">
+    <div class="modal">
+      <div class="modal-header">
+        <h3 id="retry-modal-title">🔄 Re-answer with…</h3>
+        <button id="retry-close" class="btn btn-ghost btn-small">✕</button>
+      </div>
+      <p class="modal-hint">Pick one or several models — each answer becomes a variant you can flip between.</p>
+      <input id="retry-model-search" class="model-search" type="text" placeholder="Search models… (also the provider's full catalog)" autocomplete="off" spellcheck="false" />
+      <select id="retry-model-sort" class="model-sort" title="List every model the provider has — sorted by release date (novelty) or by the outgoing (completion) token price">
+        <option value="picked">Picked models</option>
+        <option value="new">All models · newest first</option>
+        <option value="output">All models · cheapest output tokens first</option>
+      </select>
+      <div id="retry-model-list" class="retry-model-list"></div>
+      <div class="modal-actions">
+        <button id="retry-cancel" class="btn btn-ghost">Cancel</button>
+        <button id="retry-go" class="btn btn-primary">🔄 Retry</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Settings modal (provider API keys) -->
   <div id="settings-modal" class="modal-overlay hidden">
     <div class="modal">
