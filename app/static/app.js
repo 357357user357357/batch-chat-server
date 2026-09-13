@@ -91,6 +91,7 @@ const els = {
   menuBtn: $("#menu-btn"),
   menuPopover: $("#menu-popover"),
   syncBtn: $("#sync-btn"),
+  toast: $("#toast"),
   cacheBtn: $("#cache-btn"),
   reasoningSelect: $("#reasoning-select"),
   settingsBtn: $("#settings-btn"),
@@ -1704,23 +1705,32 @@ async function syncNow() {
 }
 
 // 🔄 Manual sync — the same refresh as the auto-sync, on demand from the
-// ☰ Menu (next to ⚙ Settings). Reports the outcome on the button itself:
-// "✅ Synced · N dialogs" on success, "⚠ Sync failed" + the error otherwise.
+// ☰ Menu (next to ⚙ Settings). The outcome shows in a toast in the bottom-
+// right corner, because the menu popover closes (and hides its buttons) the
+// moment any button inside it is clicked — button text would never be seen.
+function showToast(message, { error = false, duration = 3000 } = {}) {
+  if (!els.toast) return;
+  els.toast.textContent = message;
+  els.toast.classList.remove("hidden", "toast-fade");
+  els.toast.classList.toggle("toast-error", error);
+  clearTimeout(showToast._timer);
+  showToast._timer = setTimeout(() => {
+    els.toast.classList.add("toast-fade");
+    setTimeout(() => els.toast.classList.add("hidden"), 300);
+  }, duration);
+}
+
 els.syncBtn.addEventListener("click", async () => {
   els.syncBtn.disabled = true;
-  els.syncBtn.textContent = "⏳ Syncing…";
+  showToast("⏳ Syncing…", { duration: 15000 }); // stays until done/fails
   try {
     await syncNow();
     const n = state.conversations.length;
-    els.syncBtn.textContent = `✅ Synced · ${n} dialog${n === 1 ? "" : "s"}`;
+    showToast(`✅ Synced · ${n} dialog${n === 1 ? "" : "s"}`);
   } catch (err) {
-    els.syncBtn.textContent = "⚠ Sync failed";
-    alert(`Sync failed: ${err.message}`);
+    showToast(`⚠ Sync failed: ${err.message}`, { error: true, duration: 6000 });
   } finally {
-    setTimeout(() => {
-      els.syncBtn.disabled = false;
-      els.syncBtn.textContent = "🔄 Sync";
-    }, 2500);
+    els.syncBtn.disabled = false;
   }
 });
 

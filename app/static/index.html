@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Batch Chat</title>
-  <link rel="stylesheet" href="style.css" />
+  <link rel="stylesheet" href="style.css?v=3" />
   <!-- Markdown + LaTeX rendering for assistant/user messages — SELF-HOSTED in /static/vendor (no CDN dependency) -->
   <link rel="stylesheet" href="vendor/katex.min.css" />
   <script defer src="vendor/katex.min.js"></script>
@@ -404,6 +404,8 @@
     </div>
   </div>
 
-  <script src="app.js"></script>
+  <div id="toast" class="toast hidden"></div>
+
+  <script src="app.js?v=3"></script>
 </body>
 </html>

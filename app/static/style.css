@@ -775,3 +775,31 @@ input:focus, textarea:focus { outline: 2px solid var(--accent); outline-offset: 
 .legend-swatch.cached { background: var(--accent); }
 .legend-swatch.uncached { background: #67718a; }
 .usage-range { margin-right: auto; }
+/* Toast notifications (e.g. 🔄 Sync result) */
+.toast {
+  position: fixed;
+  right: 20px;
+  bottom: 20px;
+  z-index: 2000;
+  max-width: 320px;
+  padding: 10px 14px;
+  border-radius: 10px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  color: var(--text-primary);
+  font-size: 0.9rem;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  opacity: 1;
+  transition: opacity 0.3s ease, transform 0.3s ease;
+}
+.toast.toast-error {
+  border-color: #e5484d;
+  background: #2a1417;
+}
+.toast.toast-fade {
+  opacity: 0;
+  transform: translateY(6px);
+}
+.toast.hidden {
+  display: none;
+}
