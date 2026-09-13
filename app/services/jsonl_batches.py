@@ -69,6 +69,18 @@ def parse_jsonl(
 
     if not requests:
         raise JsonlParseError("No requests parsed from the JSONL (empty file?)")
+
+    # Auto-generated ids ("req-N") can collide with explicit custom_ids in the
+    # same file (e.g. line 1 has custom_id "req-1", line 2 has none). De-dup:
+    # first occurrence keeps its id, later duplicates get a numeric suffix.
+    seen: dict[str, int] = {}
+    for request in requests:
+        cid = request["custom_id"]
+        if cid in seen:
+            seen[cid] += 1
+            request["custom_id"] = f"{cid}.{seen[cid]}"
+        else:
+            seen[cid] = 0
     return requests
 
 

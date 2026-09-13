@@ -18,8 +18,14 @@ os.environ["DATABASE_URL"] = "sqlite:////tmp/bc_test_batch.db"
 
 from fastapi.testclient import TestClient  # noqa: E402
 
+from app.config import settings  # noqa: E402
 from app.main import app  # noqa: E402
 from app.services.jsonl_batches import JsonlParseError, parse_jsonl  # noqa: E402
+
+# Settings are baked at the first `import app.main` — which in a full-suite run
+# happens in another test module before we set OPENROUTER_BASE_URL here. Patch
+# explicitly so the flow test always talks to the mock, regardless of order.
+settings.openrouter_base_url = f"http://127.0.0.1:{PORT}"
 
 BATCH_RESPONSES: dict = {}
 SUBMITTED: dict = {}
@@ -132,6 +138,19 @@ def test_openrouter_format():
     assert reqs[0]["body"]["messages"][0]["content"] == "hi"
     assert reqs[1]["body"]["messages"][0]["content"] == "yo"
     assert reqs[2]["custom_id"].startswith("short-")
+
+
+def test_duplicate_custom_ids_deduped():
+    # Duplicate ids (explicit or colliding with auto-generated "req-N") must
+    # get a suffix so their results don't overwrite each other.
+    jsonl = (
+        '{"custom_id": "req-1", "prompt": "a"}\n'
+        '{"custom_id": "req-1", "prompt": "b"}\n'
+        '{"custom_id": "req-1", "prompt": "c"}\n'
+    )
+    ids = [r["custom_id"] for r in parse_jsonl(jsonl)]
+    assert ids == ["req-1", "req-1.1", "req-1.2"]
+    assert len(set(ids)) == 3
 
 
 def test_vertex_format():
