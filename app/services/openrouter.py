@@ -131,8 +131,10 @@ _is_reasoning_unsupported_error = is_reasoning_unsupported_error
 def is_flex_unsupported_error(status_code: int, message: str) -> bool:
     """True when the provider rejected the flex processing tier itself (the
     model exists but not via flex) — callers then fall back to a standard
-    request (or the Batch API for bulk work)."""
-    if status_code != 400:
+    request (or the Batch API for bulk work). OpenRouter answers 400; strict
+    OpenAI-compatible gateways (pydantic-style validation) answer 422 — both
+    only count when the message names the tier."""
+    if status_code not in (400, 422):
         return False
     lowered = message.lower()
     return "service_tier" in lowered or "flex" in lowered

@@ -29,7 +29,7 @@ You asked which tools to use — here is the reasoning behind what's in this rep
 - 🗑️ **Delete any question/answer inside a dialogue** from the web — the text stays archived in the server DB, and every synced device (including the phone) drops it on the next sync
 - ✏️ **Edit your own questions** (web + phone) and 🔄 **retry them** — retry works on answers AND questions (fresh answers appear right under the question; the model sees the context up to it only, so re-asking an edited question uses the new wording)
 - 🔁 **Key sync** — OpenRouter/Tavily keys are unified between phone and server (gaps filled both ways, server-first)
-- ⚡ **Flex processing tier** — append `:flex` to any model (e.g. `openai/gpt-6-astra:flex`) for the cheaper `service_tier="flex"` processing; if the provider doesn't serve flex for that model, the server falls back to the standard tier automatically (or run it through the Batch API)
+- ⚡ **Flex processing tier** — append `:flex` to any model (e.g. `openai/gpt-6-astra:flex`) for the cheaper `service_tier="flex"` processing; if the provider doesn't serve flex for that model, the server falls back to the standard tier automatically (or run it through the Batch API). `custom:` gateways get the same treatment (the tier is sent and auto-falls back); `vertex:`/`bedrock:` have no flex tier and simply run the standard one
 - 🔥 **Cache keep-alive** — after the last chat, near-empty pings (every 45 min) refresh the 1-hour prompt cache at ~10% of input cost, keeping replies cheap for 2–24 hours instead of just one (Settings → Cache keep-alive; 0 = off)
 - ⚙️ Pure vanilla JS UI, works on mobile and desktop
 
@@ -43,7 +43,7 @@ your own cloud billing) by prefixing the model name in the "Models" picker
 | Prefix | Example | Needs |
 |---|---|---|
 | *(none)* | `anthropic/claude-sonnet-4.5` | `OPENROUTER_API_KEY` |
-| *(none)* + `:flex` | `openai/gpt-6-astra:flex` — Flex processing tier (`service_tier="flex"`, cheaper/slower); auto-falls-back to standard tier when the provider rejects it | `OPENROUTER_API_KEY` |
+| *(none)* + `:flex` | `openai/gpt-6-astra:flex` — Flex processing tier (`service_tier="flex"`, cheaper/slower); auto-falls-back to standard tier when the provider rejects it. Also accepted on `custom:` ids (tier sent with the same fallback); `vertex:`/`bedrock:` strip it and run standard | `OPENROUTER_API_KEY` (or `CUSTOM_BASE_URL`; Vertex/Bedrock ignore the tier) |
 | `vertex:` | `vertex:gemini-2.5-flash`, `vertex:claude-sonnet-4-5@20250929` | `GOOGLE_PROJECT_ID` + service-account key |
 | `bedrock:` | `bedrock:anthropic.claude-3-5-sonnet-20241022-v2:0` | `AWS_ACCESS_KEY_ID` + `AWS_SECRET_ACCESS_KEY` |
 | `custom:` | `custom:z-ai/glm-5.3-flash` | `CUSTOM_BASE_URL` (+ `CUSTOM_API_KEY` if the gateway needs one) |

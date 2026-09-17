@@ -5,6 +5,11 @@
   "bedrock:anthropic.claude-3-5-sonnet-..."     -> AWS Bedrock
   "custom:z-ai/glm-5.3-flash"                   -> custom OpenAI-compatible
                                                    endpoint (CUSTOM_BASE_URL)
+
+The ":flex" processing-tier suffix is stripped BEFORE dispatch: OpenRouter
+handles it itself (service_tier="flex" + standard-tier fallback); custom
+gateways receive the tier via custom_provider (service_tier + fallback);
+Vertex/Bedrock have no flex tier, so they simply run the plain model.
 """
 
 from app.config import settings
@@ -21,13 +26,18 @@ def chat_completion(
     max_tokens: int | None = None,
     reasoning_effort: str | None = None,
 ) -> str:
-    if model.startswith("vertex:"):
-        return vertex_ai.chat_completion(model[len("vertex:"):], messages, temperature, max_tokens)
-    if model.startswith("bedrock:"):
-        return bedrock.chat_completion(model[len("bedrock:"):], messages, temperature, max_tokens)
-    if model.startswith("custom:"):
+    # Strip the processing-tier suffix up front: the OpenRouter branch passes
+    # the original model (it does its own tier handling); the others must
+    # never see a ":flex" id — it is not part of their model names.
+    base_model, tier = openrouter.split_model_variant(model)
+    if base_model.startswith("vertex:"):
+        return vertex_ai.chat_completion(base_model[len("vertex:"):], messages, temperature, max_tokens)
+    if base_model.startswith("bedrock:"):
+        return bedrock.chat_completion(base_model[len("bedrock:"):], messages, temperature, max_tokens)
+    if base_model.startswith("custom:"):
         return custom_provider.chat_completion(
-            model[len("custom:"):], messages, temperature, max_tokens, reasoning_effort
+            base_model[len("custom:"):], messages, temperature, max_tokens, reasoning_effort,
+            flex=(tier == "flex"),
         )
     return openrouter.chat_completion(model, messages, temperature, max_tokens,
                                       reasoning_effort=reasoning_effort)
@@ -43,16 +53,17 @@ def chat_completion_full(
     """Like chat_completion, but returns a dict with the reply text plus
     OpenRouter metadata (provider, generation id, token counts, cost). Other
     providers return the content only."""
-    if model.startswith("vertex:"):
+    base_model, tier = openrouter.split_model_variant(model)
+    if base_model.startswith("vertex:"):
         return {"content": vertex_ai.chat_completion(
-            model[len("vertex:"):], messages, temperature, max_tokens)}
-    if model.startswith("bedrock:"):
+            base_model[len("vertex:"):], messages, temperature, max_tokens)}
+    if base_model.startswith("bedrock:"):
         return {"content": bedrock.chat_completion(
-            model[len("bedrock:"):], messages, temperature, max_tokens)}
-    if model.startswith("custom:"):
+            base_model[len("bedrock:"):], messages, temperature, max_tokens)}
+    if base_model.startswith("custom:"):
         return custom_provider.chat_completion_full(
-            model[len("custom:"):], messages, temperature, max_tokens,
-            reasoning_effort,
+            base_model[len("custom:"):], messages, temperature, max_tokens,
+            reasoning_effort, flex=(tier == "flex"),
         )
     return openrouter.chat_completion_full(
         model, messages, temperature=temperature, max_tokens=max_tokens,

@@ -12,7 +12,9 @@ e.g. "custom:z-ai/glm-5.3-flash".
 What is intentionally NOT available through this provider:
   - reasoning_effort: OpenRouter's unified `reasoning` parameter has no
     OpenAI-compatible meaning (the JSON schema differs per vendor), so it is
-    not forwarded — requests stay plain chat completions.
+    not forwarded — requests stay plain chat completions. (The `flex` flag
+    IS forwarded: service_tier="flex" is plain OpenAI API — retried once on
+    the standard tier when the gateway rejects it.)
   - Prompt-cache tagging (Anthropic cache_control blocks) and the `usage`
     include flag are OpenRouter niceties; some compatible servers reject
     unknown fields, so nothing extra is sent. A "cached" break-down in the
@@ -24,6 +26,7 @@ import httpx
 import time
 
 from app.config import settings
+from app.services.openrouter import is_flex_unsupported_error
 from app.services.provider_errors import ProviderError
 
 REQUEST_TIMEOUT = httpx.Timeout(180.0, connect=15.0)
@@ -67,9 +70,10 @@ def chat_completion(
     temperature: float | None = None,
     max_tokens: int | None = None,
     reasoning_effort: str | None = None,
+    flex: bool = False,
 ) -> str:
     """Call one OpenAI-compatible endpoint synchronously. Returns the reply text."""
-    return chat_completion_full(model, messages, temperature, max_tokens)["content"]
+    return chat_completion_full(model, messages, temperature, max_tokens, flex=flex)["content"]
 
 
 def chat_completion_full(
@@ -78,18 +82,26 @@ def chat_completion_full(
     temperature: float | None = None,
     max_tokens: int | None = None,
     reasoning_effort: str | None = None,
+    flex: bool = False,
 ) -> dict:
     """Like chat_completion, but returns a dict — content plus whatever usage
     metadata the vendor reports (token counts; some also report a cost).
 
     `reasoning_effort` is accepted for signature compatibility with the other
-    providers but deliberately ignored (see module docstring)."""
+    providers but deliberately ignored (see module docstring).
+
+    `flex` requests OpenAI's Flex processing tier (service_tier="flex") — the
+    same treatment the OpenRouter path gives a ":flex" model suffix. If the
+    gateway rejects the tier (some validate unknown fields strictly), the
+    request is retried once on the standard tier."""
     _require_config()
     payload: dict = {"model": model, "messages": messages}
     if temperature is not None:
         payload["temperature"] = temperature
     if max_tokens is not None:
         payload["max_tokens"] = max_tokens
+    if flex:
+        payload["service_tier"] = "flex"
 
     try:
         with httpx.Client(timeout=REQUEST_TIMEOUT) as client:
@@ -98,6 +110,18 @@ def chat_completion_full(
                 headers=_headers(),
                 json=payload,
             )
+            # Flex tier not available on this gateway → standard tier
+            if (
+                resp.status_code >= 400
+                and flex
+                and is_flex_unsupported_error(resp.status_code, _safe_error(resp))
+            ):
+                payload.pop("service_tier", None)
+                resp = client.post(
+                    f"{settings.custom_base_url.strip().rstrip('/')}/chat/completions",
+                    headers=_headers(),
+                    json=payload,
+                )
             if resp.status_code >= 400:
                 raise CustomProviderError(
                     f"Custom provider error (HTTP {resp.status_code}): "

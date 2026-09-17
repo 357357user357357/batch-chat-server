@@ -174,6 +174,139 @@ def test_flex_unsupported_error_detection():
     assert is_flex_unsupported_error(400, "Flex processing is not supported")
     assert not is_flex_unsupported_error(400, "Unknown model: openai/gpt-6-astra")
     assert not is_flex_unsupported_error(404, "flex")
+    # Strict OpenAI-compatible gateways (pydantic-style validation) answer 422
+    assert is_flex_unsupported_error(422, "Extra inputs are not permitted: service_tier")
+    assert not is_flex_unsupported_error(422, "Invalid message content")
+    assert not is_flex_unsupported_error(500, "flex")
+
+
+def test_custom_flex_runs_service_tier_and_falls_back(monkeypatch):
+    """custom:model:flex → the gateway receives the plain model id with
+    service_tier="flex"; when it rejects the tier (400 or 422), the request
+    is retried once on the standard tier — same behavior as the OpenRouter
+    path, so ":flex" stays safe to append for every model."""
+    calls = []
+
+    class FakeResponse:
+        def __init__(self, status_code, payload):
+            self.status_code = status_code
+            self._payload = payload
+
+        def json(self):
+            return self._payload
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def post(self, url, headers=None, json=None):
+            calls.append(dict(json))  # snapshot: the code mutates the payload
+            if json.get("service_tier") == "flex":
+                return FakeResponse(
+                    422,
+                    {"detail": "Extra inputs are not permitted: service_tier"},
+                )
+            return FakeResponse(
+                200,
+                {"choices": [{"message": {"content": "from custom gateway"}}]},
+            )
+
+    import httpx
+
+    from app.config import settings as app_settings
+    from app.services import providers
+
+    monkeypatch.setattr(httpx, "Client", FakeClient)
+    monkeypatch.setattr(app_settings, "custom_base_url", "http://gateway.local/v1")
+    monkeypatch.setattr(app_settings, "custom_api_key", "")
+
+    info = providers.chat_completion_full(
+        "custom:z-ai/glm-5.3-flash:flex", [{"role": "user", "content": "hi"}]
+    )
+    assert info["content"] == "from custom gateway"
+    assert len(calls) == 2
+    assert calls[0]["model"] == "z-ai/glm-5.3-flash"
+    assert calls[0]["service_tier"] == "flex"
+    assert calls[1]["model"] == "z-ai/glm-5.3-flash"
+    assert "service_tier" not in calls[1]
+
+
+def test_custom_plain_model_sends_no_service_tier(monkeypatch):
+    """No :flex suffix → the gateway payload carries no service_tier at all
+    (the tier is opt-in, never ambient)."""
+    calls = []
+
+    class FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {"choices": [{"message": {"content": "ok"}}]}
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def post(self, url, headers=None, json=None):
+            calls.append(dict(json))
+            return FakeResponse()
+
+    import httpx
+
+    from app.config import settings as app_settings
+    from app.services import providers
+
+    monkeypatch.setattr(httpx, "Client", FakeClient)
+    monkeypatch.setattr(app_settings, "custom_base_url", "http://gateway.local/v1")
+    monkeypatch.setattr(app_settings, "custom_api_key", "")
+
+    info = providers.chat_completion_full(
+        "custom:z-ai/glm-5.3-flash", [{"role": "user", "content": "hi"}]
+    )
+    assert info["content"] == "ok"
+    assert len(calls) == 1
+    assert calls[0]["model"] == "z-ai/glm-5.3-flash"
+    assert "service_tier" not in calls[0]
+
+
+def test_vertex_and_bedrock_flex_suffix_is_dropped(monkeypatch):
+    """vertex:/bedrock: models have no flex tier — the suffix is stripped
+    before dispatch and the plain model id is used (never a service_tier)."""
+    from app.services import bedrock, providers, vertex_ai
+
+    seen = []
+
+    def fake_vertex(model, messages, temperature=None, max_tokens=None):
+        seen.append(model)
+        return "vertex answer"
+
+    def fake_bedrock(model, messages, temperature=None, max_tokens=None):
+        seen.append(model)
+        return "bedrock answer"
+
+    monkeypatch.setattr(vertex_ai, "chat_completion", fake_vertex)
+    monkeypatch.setattr(bedrock, "chat_completion", fake_bedrock)
+
+    info = providers.chat_completion_full(
+        "vertex:gemini-2.5-flash:flex", [{"role": "user", "content": "hi"}]
+    )
+    assert info == {"content": "vertex answer"}
+    assert providers.chat_completion(
+        "bedrock:anthropic.claude-3-5-sonnet-20241022-v2:0:flex",
+        [{"role": "user", "content": "hi"}],
+    ) == "bedrock answer"
+    assert seen == ["gemini-2.5-flash", "anthropic.claude-3-5-sonnet-20241022-v2:0"]
 
 
 def test_chat_send_reports_web_search_used(monkeypatch):

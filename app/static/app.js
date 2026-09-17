@@ -497,12 +497,11 @@ function renderModelCheckboxes() {
       addRow(model, model, modePrice(model));
     });
     if (query && state.modelCatalog.length) {
-      const factor = state.chatMode === "flex" ? 0.5 : 1;
       state.modelCatalog
         .filter((m) => !listedIds.has(m.id) && matches(m))
         .slice(0, 60)
         .forEach((m) => {
-          const price = { prompt: m.prompt * factor, completion: m.completion * factor };
+          const price = catalogPrice(m);
           addRow(m.id, m.name || m.id, price);
         });
     }
@@ -520,8 +519,11 @@ function renderModelCheckboxes() {
 
 // Catalog row price per chat mode: the picker's plain ids run at the
 // standard tier (the ⚡ parallel chat), Flex runs at the 50% discount.
+// Provider-prefixed ids (custom:/vertex:/bedrock:) have no Flex tier of
+// their own — the server runs them at the standard price.
 function catalogPrice(m) {
-  const factor = state.chatMode === "flex" ? 0.5 : 1;
+  const prefixed = /^(custom|vertex|bedrock):/.test(m.id);
+  const factor = state.chatMode === "flex" && !prefixed ? 0.5 : 1;
   return { prompt: m.prompt * factor, completion: m.completion * factor };
 }
 
