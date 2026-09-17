@@ -13,7 +13,8 @@ Local edit → test → `git push origin main` → `ssh root@166.1.2.48 "cd /opt
 - uvicorn serves TLS directly on 443→8443 (no nginx). Certs via lego 5.4.1 (`/usr/local/bin/lego`), shortlived profile (~6 days), state in `/opt/batch-chat-server/.lego/`.
 - Renewal: `/etc/cron.d/batch-chat-tls` runs `scripts/renew-tls.sh` every 8h → log `/var/log/batch-chat-tls.log` (logrotate: `/etc/logrotate.d/batch-chat-tls`). Script skips while >5 days remain, then `lego run` re-issues in place and restarts the container.
 - Gotcha (seen on the old server Sep 2026): if the cert was issued by a DIFFERENT ACME account than the one renewing, `lego renew` fails forever with ARI 403 "requester account did not request the certificate being replaced". Fix = delete `.lego/certificates/*` and let `lego run` issue fresh (new account is fine).
-- Domain certs: uncomment `TLS_DOMAINS` in `.env` AFTER DNS for flexchat.top/www points at the server (http-01 must hit this box), then run renew-tls.sh.
+- Domain certs: `TLS_DOMAINS` in `.env` is active (flexchat.top + www), cert issued Sep 17 2026 (shortlived, valid ~7 days).
+- Old server 194.36.85.208: since its cert expired Sep 16 (lego ARI account mismatch) and DNS has an 86400s TTL, it now runs an iptables DNAT relay (443+8000 → 166.1.2.48, persisted via netfilter-persistent) so stale-DNS clients get the new valid cert. Removal steps: `/root/REMOVE-PROXY-NOTE.txt` on the old server (remove after 2026-09-18).
 - App-pinning CA for the Android app lives in `certs/` (ca.crt embedded in the app; copy it when migrating servers).
 
 ## Sync duplicate-flood guard (Sep 2026 bug)
