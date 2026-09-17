@@ -27,6 +27,8 @@ BATCH_ERROR_STATUSES = frozenset({"failed", "expired", "cancelled"})
 DEFAULT_MODELS = [
     "openai/gpt-6-astra",
     "openai/gpt-6-astra-pro",
+    "openai/gpt-5.6-sol",
+    "openai/gpt-5.6-sol-pro",
     "~deepseek/deepseek-v4-flash-latest",
     "anthropic/claude-fable-5.1",
 ]
