@@ -8,6 +8,7 @@ Local edit → test → `git push origin main` → `ssh root@166.1.2.48 "cd /opt
 
 ## Testing
 `.venv/bin/python -m pytest tests/ -q` (~113 tests, <10s). Tests set `APP_PASSWORD=test` + tmp sqlite via env before importing `app.main`.
+Live deployment check: `SMOKE_PASSWORD=<prod pw> python3 scripts/deploy_smoke.py [BASE_URL]` — stdlib-only E2E against a running server (TLS cert, health, login, sync push/pull with a duplicate-flood payload, idempotent re-push, sync-native tombstone delete, /api/chat/models/all merge). Creates one `smoke-*` dialog and tombstones it (archive-only, invisible to devices).
 
 ## HTTPS / TLS
 - uvicorn serves TLS directly on 443→8443 (no nginx). Certs via lego 5.4.1 (`/usr/local/bin/lego`), shortlived profile (~6 days), state in `/opt/batch-chat-server/.lego/`.
