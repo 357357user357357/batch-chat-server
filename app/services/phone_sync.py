@@ -81,3 +81,31 @@ def batch_label(prompts: list[str]) -> str:
     first = next((p for p in prompts if p and p.strip()), "") or "Batch chat"
     cleaned = " ".join(first.split())
     return cleaned[:42] + ("…" if len(cleaned) > 42 else "")
+
+
+def collapse_repeated_blocks(messages: list[dict], min_repeats: int = 3) -> list[dict]:
+    """Collapse a tail that repeats the same block of messages ``min_repeats``+ times.
+
+    Flood guard for every ingest path (sync push, phone import). A buggy
+    client release once synced its whole dialog list with the same dialog
+    appended over and over, so a single push stored the identical Q/A pair
+    32 times in one conversation — and every device kept receiving the
+    copies from then on. When the message list is a (possibly empty) prefix
+    followed by the same block repeated at least ``min_repeats`` times, keep
+    one copy of the block and drop the repetitions.
+
+    Messages are compared by (role, content) — the same identity the sync
+    merge and the tombstones use. A user legitimately repeating one
+    identical question once (two copies) is left untouched.
+    """
+    ids = [(m.get("role"), m.get("content")) for m in messages]
+    n = len(ids)
+    for offset in range(0, n - min_repeats + 1):
+        tail = n - offset
+        for block in range(1, tail // min_repeats + 1):
+            if tail % block:
+                continue
+            head = ids[offset:offset + block]
+            if all(ids[i] == head[(i - offset) % block] for i in range(offset, n)):
+                return messages[:offset + block]
+    return messages

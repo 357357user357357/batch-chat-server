@@ -42,7 +42,12 @@ from app.schemas import (
 )
 from app.security import get_account_id
 from app.services.messages import edit_user_message
-from app.services.phone_sync import batch_messages, dialog_messages, title_default
+from app.services.phone_sync import (
+    batch_messages,
+    collapse_repeated_blocks,
+    dialog_messages,
+    title_default,
+)
 from app.services.account import default_account_id
 from app.services.settings_store import adopt_missing_keys, syncable_keys
 
@@ -237,6 +242,11 @@ def _upsert(
     every device-driven change marks modified_by (last modifier; the date is
     updated_at). Tombstoned (deleted) dialogs are never resurrected by a push.
     """
+    # Flood guard: a buggy client release pushed whole dialog lists with the
+    # same dialog repeated dozens of times, appending 32 identical Q/A pairs
+    # to the server. Collapse a repeated-block tail before merging so no
+    # client can ever flood the archive again.
+    messages = collapse_repeated_blocks(messages)
     conv = db.scalar(
         select(Conversation)
         .options(selectinload(Conversation.messages))

@@ -10,7 +10,13 @@ from app.schemas import (
     PhoneImportRequest,
 )
 from app.security import get_account_id
-from app.services.phone_sync import batch_label, batch_messages, dialog_messages, title_default
+from app.services.phone_sync import (
+    batch_label,
+    batch_messages,
+    collapse_repeated_blocks,
+    dialog_messages,
+    title_default,
+)
 
 router = APIRouter(prefix="/api/import", tags=["import"])
 
@@ -82,7 +88,7 @@ def import_phone_data(
     for dialog in payload.dialogs or []:
         if dialog.id and dialog.id in existing_ext:
             continue
-        messages = dialog_messages(dialog)
+        messages = collapse_repeated_blocks(dialog_messages(dialog))
         _store_conversation(
             db,
             account_id=account_id,
@@ -101,7 +107,7 @@ def import_phone_data(
     for item in payload.batches or []:
         if item.id and item.id in existing_ext:
             continue
-        messages = batch_messages(item)
+        messages = collapse_repeated_blocks(batch_messages(item))
         _store_conversation(
             db,
             account_id=account_id,
