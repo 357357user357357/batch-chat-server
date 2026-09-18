@@ -14,3 +14,4 @@ services:
       - ./data:/app/data
       - ./certs:/certs:ro
       - ./.lego/certificates:/lego:ro
+      - ./downloads:/app/downloads
