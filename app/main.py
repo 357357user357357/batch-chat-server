@@ -3,6 +3,7 @@ from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import inspect, text
 
@@ -181,6 +182,96 @@ start_cache_keeper()
 @app.get("/health")
 def health():
     return {"ok": True}
+
+
+# ---------- /links page + /downloads (APK hosting) ----------
+# Both live BEFORE the "/" StaticFiles mount below for the same reason: the
+# "/" mount swallows every path that has no earlier route or mount.
+# /downloads hosts build artifacts (the Android APK); /links is the page to
+# share with new devices — it lists the app, both repos and the APK.
+DOWNLOADS_DIR = Path(__file__).resolve().parent.parent / "downloads"
+DOWNLOADS_DIR.mkdir(exist_ok=True)
+app.mount("/downloads", StaticFiles(directory=DOWNLOADS_DIR), name="downloads")
+
+_LINKS_HTML = """<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Batch Chat — links</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center;
+    background: #0e1116; color: #e6e8eb;
+    font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    padding: 24px;
+  }
+  .card { width: 100%; max-width: 560px; }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  .sub { color: #9aa3ad; margin: 0 0 24px; font-size: 14px; }
+  a.tile {
+    display: flex; align-items: center; gap: 14px;
+    background: #171c24; border: 1px solid #2a323d; border-radius: 14px;
+    padding: 14px 16px; margin-bottom: 12px; text-decoration: none; color: inherit;
+    transition: border-color .15s, background .15s;
+  }
+  a.tile:hover { border-color: #4f8cff; background: #1b2230; }
+  .icon { flex: 0 0 40px; height: 40px; display: flex; align-items: center; justify-content: center;
+          background: #232c3a; border-radius: 10px; font-size: 20px; }
+  .t { font-weight: 600; }
+  .d { color: #9aa3ad; font-size: 13px; overflow-wrap: anywhere; }
+  footer { color: #6b7480; font-size: 12px; margin-top: 18px; text-align: center; }
+  footer a { color: #6b7480; }
+</style>
+</head>
+<body>
+<main class="card">
+  <h1>🧊 Batch Chat</h1>
+  <p class="sub">Everything for this instance — flexchat.top</p>
+
+  <a class="tile" href="/downloads/batch-chat.apk" download>
+    <span class="icon">🤖</span>
+    <span><span class="t">Download the Android app (APK)</span><br>
+    <span class="d">flexchat.top/downloads/batch-chat.apk</span></span>
+  </a>
+
+  <a class="tile" href="https://github.com/357357user357357/batch-chat" target="_blank" rel="noopener">
+    <span class="icon">📱</span>
+    <span><span class="t">Phone app — source (GitHub)</span><br>
+    <span class="d">github.com/357357user357357/batch-chat</span></span>
+  </a>
+
+  <a class="tile" href="https://github.com/357357user357357/batch-chat-server" target="_blank" rel="noopener">
+    <span class="icon">🐙</span>
+    <span><span class="t">Server — source (GitHub)</span><br>
+    <span class="d">github.com/357357user357357/batch-chat-server</span></span>
+  </a>
+
+  <a class="tile" href="/">
+    <span class="icon">💬</span>
+    <span><span class="t">Open the web UI</span><br>
+    <span class="d">flexchat.top</span></span>
+  </a>
+
+  <a class="tile" href="/api/docs">
+    <span class="icon">🛠️</span>
+    <span><span class="t">API docs (OpenAPI)</span><br>
+    <span class="d">flexchat.top/api/docs</span></span>
+  </a>
+
+  <footer>Self-hosted · FastAPI + SQLite · the APK is built from the app repo above</footer>
+</main>
+</body>
+</html>
+"""
+
+
+@app.get("/links", include_in_schema=False)
+def links():
+    """Public landing page with the app/repo/APK links (no auth)."""
+    return HTMLResponse(_LINKS_HTML)
 
 # Serve the static web UI (Plain HTML/JS, no build step required)
 ui_dir = Path(__file__).parent / "static"

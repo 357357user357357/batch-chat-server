@@ -14,6 +14,10 @@ data/
 *.db-wal
 *.db-shm
 
+# Build artifacts (the Android APK is copied here at deploy time, not committed)
+downloads/*.apk
+downloads/*.aab
+
 # OS
 .DS_Store
 

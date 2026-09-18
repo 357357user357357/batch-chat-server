@@ -277,6 +277,56 @@ def test_sync_push_delete_preserves_messages_as_archive():
         db.close()
 
 
+def test_sync_push_pull_roundtrips_per_message_model_and_stats():
+    """The phone pushes `model` (+ reasoning/provider/gen_id/tokens/cost) per
+    message; the pull must return them so bubbles can show the exact serving
+    model (including a ":flex" marker) on every device."""
+    headers = auth_headers()
+    ext_id = "roundtrip-model-1"
+    push_body = {
+        "dialogs": [
+            {
+                "id": ext_id,
+                "title": "Model round-trip",
+                "model": "deepseek/deepseek-v4",
+                "messages": [
+                    {"role": "user", "content": "Q?", "model": None},
+                    {
+                        "role": "assistant",
+                        "content": "A!",
+                        "model": "deepseek/deepseek-v4:flex",
+                        "reasoning": "low",
+                        "provider": "Novita",
+                        "gen_id": "gen-abc",
+                        "tokens_prompt": 100,
+                        "tokens_completion": 200,
+                        "total_tokens": 300,
+                        "cost": 0.0021,
+                    },
+                ],
+            }
+        ],
+        "batches": [],
+    }
+    resp = client.post("/api/sync/push", headers=headers, json=push_body)
+    assert resp.status_code == 200, resp.text
+
+    pulled = client.get("/api/sync/pull", headers=headers).json()["conversations"]
+    match = next(c for c in pulled if c["external_id"] == ext_id)
+    assert match["model"] == "deepseek/deepseek-v4"
+    assistant = next(m for m in match["messages"] if m["role"] == "assistant")
+    assert assistant["model"] == "deepseek/deepseek-v4:flex"
+    assert assistant["reasoning"] == "low"
+    assert assistant["provider"] == "Novita"
+    assert assistant["gen_id"] == "gen-abc"
+    assert assistant["total_tokens"] == 300
+    assert assistant["cost"] == 0.0021
+    # User messages deliberately inherit the dialog model on ingest
+    # (phone_sync.dialog_messages backfills `m.model or dialog.model`).
+    user = next(m for m in match["messages"] if m["role"] == "user")
+    assert user["model"] == "deepseek/deepseek-v4"
+
+
 if __name__ == "__main__":
     for name, fn in sorted(globals().items()):
         if name.startswith("test_") and callable(fn):
