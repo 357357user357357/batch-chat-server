@@ -4,6 +4,12 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Batch Chat</title>
+  <!-- PWA: installable on Android/iOS home screens. The service worker is
+       network-first (never serves stale app files) — the cache is only the
+       offline fallback shell. -->
+  <link rel="manifest" href="manifest.webmanifest" />
+  <meta name="theme-color" content="#0e1116" />
+  <link rel="apple-touch-icon" href="icon-192.png" />
   <link rel="stylesheet" href="style.css?v=3" />
   <!-- Markdown + LaTeX rendering for assistant/user messages — SELF-HOSTED in /static/vendor (no CDN dependency) -->
   <link rel="stylesheet" href="vendor/katex.min.css" />
@@ -407,5 +413,13 @@
   <div id="toast" class="toast hidden"></div>
 
   <script src="app.js?v=3"></script>
+  <script>
+    // PWA service worker registration (network-first worker — see sw.js).
+    if ("serviceWorker" in navigator) {
+      window.addEventListener("load", () => {
+        navigator.serviceWorker.register("sw.js").catch(() => {});
+      });
+    }
+  </script>
 </body>
 </html>
