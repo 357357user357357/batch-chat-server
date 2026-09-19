@@ -1,6 +1,8 @@
 # Batch Chat (phone app)
 
-![tests](https://img.shields.io/badge/unit%20tests-21%20passing-brightgreen) ![platform](https://img.shields.io/badge/platform-Android%20%2B%20iOS-blue) ![server](https://img.shields.io/badge/sync-flexchat.top-4f8cff)
+![tests](https://img.shields.io/badge/tests-117%20passing-brightgreen) ![platform](https://img.shields.io/badge/platform-Android%20%2B%20iOS-blue) ![server](https://img.shields.io/badge/sync-flexchat.top-4f8cff)
+
+> Phone app repo: **https://github.com/357357user357357/batch-chat** · links page: **https://flexchat.top/links**
 
 > Expo/React-Native app: live chat + async batch mode against OpenRouter, with
 > device-to-server sync. Download the latest APK: **https://flexchat.top/downloads/batch-chat.apk**

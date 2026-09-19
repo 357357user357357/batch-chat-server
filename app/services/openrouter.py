@@ -1,3 +1,4 @@
+import re
 import time
 
 import httpx
@@ -146,6 +147,18 @@ class OpenRouterError(ProviderError):
     pass
 
 
+def _max_token_limit_from_error(text: str) -> int | None:
+    """Provider-stated max output tokens cap from a 400/422 error body, or None.
+
+    When a request omits `max_tokens`, OpenRouter substitutes the model's
+    catalog maximum, which some providers reject outright, e.g. Google:
+    "Requested maximum tokens of 131072 exceeds the maximum output tokens
+    limit: 102400." Mirrors the phone app's token-limits.ts helper.
+    """
+    match = re.search(r"max(?:imum)? output tokens limit:\s*(\d+)", text or "")
+    return int(match.group(1)) if match else None
+
+
 def _headers() -> dict[str, str]:
     return {
         "Authorization": f"Bearer {settings.openrouter_api_key}",
@@ -280,6 +293,20 @@ def chat_completion_full(
                         headers=_headers(),
                         json=payload,
                     )
+                # Provider caps max output tokens below what was requested
+                # (OpenRouter substitutes the model's catalog maximum when the
+                # request omits max_tokens; e.g. Google: "Requested maximum
+                # tokens of 131072 exceeds the maximum output tokens limit:
+                # 102400") → retry once clamped to that limit.
+                if resp.status_code >= 400:
+                    token_limit = _max_token_limit_from_error(_safe_error(resp))
+                    if token_limit:
+                        payload["max_tokens"] = token_limit
+                        resp = client.post(
+                            f"{settings.openrouter_base_url}/chat/completions",
+                            headers=_headers(),
+                            json=payload,
+                        )
                 if resp.status_code >= 400:
                     raise OpenRouterError(
                         f"OpenRouter error (HTTP {resp.status_code}): "
@@ -293,6 +320,23 @@ def chat_completion_full(
         content = data["choices"][0]["message"]["content"]
     except (KeyError, IndexError, TypeError) as exc:
         raise OpenRouterError(f"Unexpected response from OpenRouter: {data!r}") from exc
+
+    if not isinstance(content, str) or not content.strip():
+        # Rare provider hiccup: HTTP 200 with empty content (seen on flaky
+        # Astra/Google endpoints) → one automatic retry before surfacing an
+        # empty answer to the user.
+        try:
+            with httpx.Client(timeout=REQUEST_TIMEOUT) as retry_client:
+                retry_resp = retry_client.post(
+                    f"{settings.openrouter_base_url}/chat/completions",
+                    headers=_headers(),
+                    json=payload,
+                )
+                if retry_resp.status_code < 400:
+                    data = retry_resp.json()
+                    content = data["choices"][0]["message"]["content"]
+        except (httpx.HTTPError, KeyError, IndexError, TypeError):
+            pass  # keep the original (empty) result rather than erroring
 
     usage = data.get("usage") or {}
     if not isinstance(usage, dict):
