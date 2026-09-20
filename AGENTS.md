@@ -18,6 +18,11 @@ Live deployment check: `SMOKE_PASSWORD=<prod pw> python3 scripts/deploy_smoke.py
 - Old server <OLD_SERVER_IP>: since its cert expired Sep 16 (lego ARI account mismatch) and DNS has an 86400s TTL, it now runs an iptables DNAT relay (443+8000 → <MAIN_IP>, persisted via netfilter-persistent) so stale-DNS clients get the new valid cert. Removal steps: `/root/REMOVE-PROXY-NOTE.txt` on the old server (remove after 2026-09-18).
 - App-pinning CA for the Android app lives in `certs/` (ca.crt embedded in the app; copy it when migrating servers).
 
+## Conversation kinds (web ⚡ Batch ↔ phone Batch tab)
+- `/api/chat/send` takes optional `kind` (`chat`|`batch`, default `chat`) on conversation creation. The web UI sends `kind: "batch"` when in ⚡ Batch chat mode — the phone app files `kind='batch'` conversations into its Batch tab and `kind='chat'` into its Chat drawer (see `sync.ts` pull merge).
+- Web batch chats with MULTIPLE models sync only their first answer per prompt into the phone's batch view (`conversationToHistoryItem` maps one assistant per prompt) — phone-side (`batch-chat` repo, sync-mapping.ts) fix pending.
+- Pasting text copied from pages that RENDER math yields one-glyph-per-line + zero-width/PUA garbage; the web composer sanitizes such pastes and `renderRichText` strips invisible chars before markdown/KaTeX.
+
 ## Sync duplicate-flood guard (Sep 2026 bug)
 A buggy client release pushed whole dialog lists with the same dialog repeated 32×; the server appended every copy. `collapse_repeated_blocks()` (app/services/phone_sync.py) now collapses a repeated-block tail (≥3 reps) on every ingest path (sync push, phone import). Already-stored floods are repaired by `scripts/cleanup_duplicate_blocks.py --db data/batch_chat.db [--dry-run]` — it TOMBSTONES the copies (never hard-deletes) so stale device pushes can't resurrect them.
 
