@@ -803,3 +803,23 @@ input:focus, textarea:focus { outline: 2px solid var(--accent); outline-offset: 
 .toast.hidden {
   display: none;
 }
+
+/* ⏳ Pending answer (SSE in-flight indicator) */
+.pending-answer {
+  color: var(--text-muted);
+}
+.pending-answer .pending-row {
+  font-size: 13px;
+  margin-bottom: 2px;
+  word-break: break-all;
+}
+.pending-answer .pending-status {
+  font-size: 12px;
+  margin-top: 4px;
+  animation: pending-pulse 1.6s ease-in-out infinite;
+}
+@keyframes pending-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+

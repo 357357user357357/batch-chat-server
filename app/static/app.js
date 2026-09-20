@@ -847,6 +847,7 @@ function groupAnswerNodes(messages) {
 }
 
 function renderMessages(messages) {
+  clearPendingAnswers(); // in-flight bubble must never survive a re-render
   state.currentMessages = messages;
   els.messages.innerHTML = "";
   // RikkaHub-style branching: consecutive assistant answers that follow one
@@ -1380,6 +1381,7 @@ async function doRetry(msg, models, btn, node) {
   const original = btn.textContent;
   btn.disabled = true;
   btn.textContent = "Retrying…";
+  showPendingAnswers(models); // ⏳ visible until the payload lands
   try {
     const resp = await apiStream("/api/chat/retry", {
       method: "POST",
@@ -1468,6 +1470,7 @@ async function doRetry(msg, models, btn, node) {
   } catch (err) {
     alert(`Retry failed: ${err.message}`);
   } finally {
+    clearPendingAnswers();
     btn.disabled = false;
     btn.textContent = original;
   }
@@ -1833,6 +1836,56 @@ els.cacheBtn.addEventListener("click", async () => {
 // ---------------------------------------------------------------
 // Send / batch chat
 // ---------------------------------------------------------------
+// ---------------------------------------------------------------
+// ⏳ Pending answer indicator — the SSE endpoints stay quiet until the
+// full payload is ready (`: ping` comments only), so show an animated
+// "in progress" bubble with live elapsed time instead of a frozen chat.
+// ---------------------------------------------------------------
+let pendingEl = null;
+let pendingTimer = null;
+let pendingStartedAt = 0;
+
+function showPendingAnswers(models) {
+  clearPendingAnswers();
+  pendingStartedAt = Date.now();
+  pendingEl = document.createElement("div");
+  pendingEl.className = "message assistant pending-answer";
+  const text = document.createElement("div");
+  text.className = "message-text";
+  for (const m of models) {
+    const row = document.createElement("div");
+    row.className = "pending-row";
+    row.textContent = `· ${m}`;
+    text.appendChild(row);
+  }
+  const status = document.createElement("div");
+  status.className = "pending-status";
+  status.textContent = "⏳ in progress… 0s";
+  text.appendChild(status);
+  pendingEl.appendChild(text);
+  els.messages.appendChild(pendingEl);
+  scrollToBottom();
+  pendingTimer = setInterval(() => {
+    if (!pendingEl) return;
+    const s = Math.floor((Date.now() - pendingStartedAt) / 1000);
+    const label = s >= 60
+      ? `${Math.floor(s / 60)}m ${String(s % 60).padStart(2, "0")}s`
+      : `${s}s`;
+    status.textContent = `⏳ in progress… ${label}`;
+  }, 1000);
+}
+
+function clearPendingAnswers() {
+  if (pendingTimer) {
+    clearInterval(pendingTimer);
+    pendingTimer = null;
+  }
+  if (pendingEl) {
+    pendingEl.remove();
+    pendingEl = null;
+  }
+}
+
 els.chatForm.addEventListener("submit", async (e) => {
   e.preventDefault();
   if (state.sending) return;
@@ -1861,6 +1914,26 @@ els.chatForm.addEventListener("submit", async (e) => {
   els.sendBtn.disabled = true;
   els.sendBtn.textContent = "Sending…";
 
+  // Optimistic echo of the question + ⏳ pending bubble — keeps the chat
+  // visibly alive while the SSE stream runs (payload arrives only at the
+  // end; both elements are replaced by the server-truth re-render then).
+  const pendingQuestion = document.createElement("div");
+  pendingQuestion.className = "message user";
+  if (els.webSearchToggle.checked) {
+    const webTag = document.createElement("span");
+    webTag.className = "message-websearch";
+    webTag.title = "Tavily web search results were injected into the prompt for this message";
+    webTag.textContent = "🌐 Web search";
+    pendingQuestion.appendChild(webTag);
+  }
+  const pendingText = document.createElement("div");
+  pendingText.className = "message-text";
+  pendingText.textContent = text;
+  pendingQuestion.appendChild(pendingText);
+  els.messages.appendChild(pendingQuestion);
+  showPendingAnswers(models);
+  scrollToBottom();
+
   try {
     const resp = await apiStream("/api/chat/send", {
       method: "POST",
@@ -1875,6 +1948,7 @@ els.chatForm.addEventListener("submit", async (e) => {
           : {}),
       }),
     });
+    clearPendingAnswers();
 
     if (state.currentConversationId === null) {
       els.chatTitle.textContent = resp.conversation_title;
@@ -1904,8 +1978,11 @@ els.chatForm.addEventListener("submit", async (e) => {
     renderMessages(state.currentMessages);
     await syncNow(); // every message syncs immediately (dialog list + open conversation)
   } catch (err) {
+    clearPendingAnswers();
+    pendingQuestion.remove(); // drop the optimistic echo — send failed
     appendError(models.join(", "), err.message);
   } finally {
+    clearPendingAnswers(); // safety net (no-op when already cleared)
     state.sending = false;
     els.sendBtn.disabled = false;
     els.sendBtn.textContent = "Send";
