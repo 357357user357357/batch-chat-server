@@ -32,3 +32,10 @@ A buggy client release pushed whole dialog lists with the same dialog repeated 3
 - OpenRouter catalog returns numeric pricing; FastRouter-style gateways return strings — always float()-convert.
 - Mock test gateways: local `http.server.HTTPServer` on 127.0.0.1 with monkeypatched settings beats network mocks.
 - scp of big files (lego ~68MB) through the 30s tool timeout leaves TRUNCATED binaries — verify md5 after transfer (segfault = corrupt download).
+
+## SSE chat streaming (Sep 2026 — "Failed to fetch" on long :flex waits)
+- `/api/chat/send` + `/api/chat/retry` stream Server-Sent Events: `: ping` comment every 10s while models run, then ONE `data:` event with the exact JSON payload the endpoint used to return buffered (`event: error` + `data:` on worker failure). Transport-only change — payload shape unchanged. Web UI parses via `apiStream()` in app/static/app.js; tests parse via a per-file `sse_data()` helper.
+- Why: during long `:flex` queue waits the old buffered response left the browser connection silent for minutes → NATs/middleboxes killed it → raw "Failed to fetch". The Android app does NOT use these endpoints (it calls OpenRouter directly); only web UI + tests consume them.
+- `openrouter.chat_completion_full` now sends `"stream": true` and folds OpenRouter SSE (keep-alive `: OPENROUTER PROCESSING` comments during :flex queueing, delta chunks, final `usage` chunk) into the same dict as before via `parse_sse_chat_stream()` — fallback chain unchanged (flex→standard, reasoning-drop, max-token clamp, empty-content retry). httpx's 180s REQUEST_TIMEOUT read component now acts as an IDLE timeout (keep-alives reset it).
+- `custom:` gateways (custom_provider.py) are still buffered — if a gateway ever queues silently for minutes, mirror the streaming there (`parse_sse_chat_stream` is importable from openrouter.py).
+

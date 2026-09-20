@@ -1,12 +1,16 @@
+import asyncio
+import json
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import timezone
 from datetime import datetime, timezone
+from typing import Callable
 
 from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.database import get_db
+from app.database import SessionLocal, get_db
 from app.device import device_label
 from app.models import Conversation, Message, utcnow
 from app.schemas import (
@@ -28,6 +32,42 @@ from app.services import custom_provider, openrouter
 from app.models import live_message_sort_key, next_sort_index
 
 router = APIRouter(prefix="/api/chat", tags=["chat"])
+
+# How often the SSE chat endpoints emit a `: ping` keep-alive while the model
+# call is still running. Long ":flex" generations can queue for minutes with
+# zero upstream bytes; without pings, NATs/middleboxes kill the silent browser
+# connection and the UI shows a raw "Failed to fetch".
+PING_INTERVAL_SECONDS = 10.0
+
+
+def sse_json_response(work: Callable[[], "ChatResponse | RetryResponse"]) -> StreamingResponse:
+    """Run `work` in a worker thread and stream the answer as Server-Sent
+    Events: `: ping` comments while it runs, then a single `data:` event with
+    the JSON payload (`event: error` + `data:` if the worker raises).
+
+    app.js's apiStream() parses this. Everything else about the API is
+    unchanged — the data: payload is the exact same JSON the endpoint used to
+    return as a buffered body.
+    """
+    async def event_stream():
+        task = asyncio.create_task(asyncio.to_thread(work))
+        yield ": ping\n\n"  # flush response headers + first byte immediately
+        while True:
+            done, _pending = await asyncio.wait({task}, timeout=PING_INTERVAL_SECONDS)
+            if done:
+                break
+            yield ": ping\n\n"
+        try:
+            result = task.result()
+            yield "data: " + json.dumps(result.model_dump(mode="json")) + "\n\n"
+        except Exception as exc:  # surface worker failures inside the stream
+            yield "event: error\ndata: " + json.dumps({"error": str(exc)}) + "\n\n"
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 def system_prompt_with_current_time(user_system: str | None) -> str:
@@ -172,13 +212,17 @@ def all_models(account_id: str = Depends(get_account_id)) -> dict:
     return {"models": models}
 
 
-@router.post("/send", response_model=ChatResponse)
-def send_chat(
+@router.post("/send")
+async def send_chat(
     payload: ChatRequest,
     request: Request,
     db: Session = Depends(get_db),
     account_id: str = Depends(get_account_id),
-) -> ChatResponse:
+) -> StreamingResponse:
+    """SSE endpoint: `: ping` keep-alives while the models run, then one
+    `data:` event carrying the full ChatResponse JSON (event: error on
+    failure). Streaming keeps the browser connection alive through NATs and
+    middleboxes that kill silent connections during long ":flex" waits."""
     # 1. Find or create the conversation (scoped to the calling account)
     if payload.conversation_id is not None:
         conv = db.scalar(
@@ -238,73 +282,87 @@ def send_chat(
     for role, content, _model in history:
         messages.append({"role": role, "content": content})
 
-    # 4. Call every model in parallel with a thread pool
+    # Everything the worker thread needs, captured before streaming starts
+    # (the worker runs on its own DB session — the request-scoped one belongs
+    # to the endpoint's thread).
     limit_models = payload.models[:20]
-    responses: dict[str, ChatResponseItem] = {}
+    conv_id = conv.id
+    conv_title = conv.title
+    user_out = MessageOut.model_validate(user_msg)
 
-    assistant_ids: dict[str, int] = {}
-
-    with ThreadPoolExecutor(max_workers=min(len(limit_models), 8)) as pool:
-        future_map = {pool.submit(call_model, model, messages,
-                                  temperature=payload.temperature,
-                                  max_tokens=payload.max_tokens,
-                                  reasoning_effort=payload.reasoning_effort): model
-                      for model in limit_models}
-        for future in as_completed(future_map):
-            item = future.result()
-            responses[item.model] = item
-
-            # 5. Persist successful assistant replies
-            if item.ok and item.content:
-                assistant_msg = Message(
-                    conversation_id=conv.id,
-                    role="assistant",
-                    content=item.content,
-                    model=item.model,
-                    reasoning=item.reasoning,
-                    provider=item.provider,
-                    gen_id=item.gen_id,
-                    tokens_prompt=item.tokens_prompt,
-                    tokens_cached=item.tokens_cached,
-                    tokens_completion=item.tokens_completion,
-                    total_tokens=item.total_tokens,
-                    cost=item.cost,
-                    sort_index=next_sort_index(db, conv.id),
-                )
-                db.add(assistant_msg)
-                db.flush()
-                assistant_ids[item.model] = assistant_msg.id
-    conv.updated_at = utcnow()
-    db.commit()
-
-    ordered = [responses[m] for m in payload.models if m in responses] or []
-    for item in ordered:
-        # Expose the DB id so the web UI can delete a fresh answer right away
-        item.message_id = assistant_ids.get(item.model)
-    # Record the exact prefix of this request so warming can be enabled for
-    # this dialog later via the 🔥 Cache toggle (no automatic pings).
-    ok_models = [i.model for i in ordered if i.ok]
-    if ok_models:
+    def _finish_send() -> ChatResponse:
+        work_db = SessionLocal()
         try:
-            cache_keeper.record(conv.id, system, ok_models)
-        except Exception:  # keep-alive must never break the chat
-            pass
-    return ChatResponse(
-        conversation_id=conv.id,
-        conversation_title=conv.title,
-        user_message=MessageOut.model_validate(user_msg),
-        responses=ordered,
-        web_search_used=web_search_used,
-    )
+            responses: dict[str, ChatResponseItem] = {}
+            assistant_ids: dict[str, int] = {}
+
+            # 4. Call every model in parallel with a thread pool
+            with ThreadPoolExecutor(max_workers=min(len(limit_models), 8) or 1) as pool:
+                future_map = {pool.submit(call_model, model, messages,
+                                          temperature=payload.temperature,
+                                          max_tokens=payload.max_tokens,
+                                          reasoning_effort=payload.reasoning_effort): model
+                              for model in limit_models}
+                for future in as_completed(future_map):
+                    item = future.result()
+                    responses[item.model] = item
+
+                    # 5. Persist successful assistant replies
+                    if item.ok and item.content:
+                        assistant_msg = Message(
+                            conversation_id=conv_id,
+                            role="assistant",
+                            content=item.content,
+                            model=item.model,
+                            reasoning=item.reasoning,
+                            provider=item.provider,
+                            gen_id=item.gen_id,
+                            tokens_prompt=item.tokens_prompt,
+                            tokens_cached=item.tokens_cached,
+                            tokens_completion=item.tokens_completion,
+                            total_tokens=item.total_tokens,
+                            cost=item.cost,
+                            sort_index=next_sort_index(work_db, conv_id),
+                        )
+                        work_db.add(assistant_msg)
+                        work_db.flush()
+                        assistant_ids[item.model] = assistant_msg.id
+            conv_ref = work_db.get(Conversation, conv_id)
+            conv_ref.updated_at = utcnow()
+            work_db.commit()
+
+            ordered = [responses[m] for m in payload.models if m in responses] or []
+            for item in ordered:
+                # Expose the DB id so the web UI can delete a fresh answer right away
+                item.message_id = assistant_ids.get(item.model)
+            # Record the exact prefix of this request so warming can be enabled
+            # for this dialog later via the 🔥 Cache toggle (no automatic pings).
+            ok_models = [i.model for i in ordered if i.ok]
+            if ok_models:
+                try:
+                    cache_keeper.record(conv_id, system, ok_models)
+                except Exception:  # keep-alive must never break the chat
+                    pass
+            return ChatResponse(
+                conversation_id=conv_id,
+                conversation_title=conv_title,
+                user_message=user_out,
+                responses=ordered,
+                web_search_used=web_search_used,
+            )
+        finally:
+            work_db.close()
+
+    return sse_json_response(_finish_send)
 
 
-@router.post("/retry", response_model=RetryResponse)
-def retry_answer(
+@router.post("/retry")
+async def retry_answer(
     payload: RetryRequest,
     request: Request,
     db: Session = Depends(get_db),
     account_id: str = Depends(get_account_id),
-) -> RetryResponse:
+) -> StreamingResponse:
     """🔄 Re-answer one assistant reply — or re-ask one question — with other
     model(s).
 
@@ -315,6 +373,9 @@ def retry_answer(
     had). New answers are stored immediately after the anchor message, so they
     show up next to it on the web and on every synced device; older answers
     are kept for comparison (delete any you don't want as usual).
+
+    Streams the result as SSE exactly like /send (`: ping` keep-alives, then
+    one `data:` event with the RetryResponse JSON).
     """
     if payload.conversation_id is None and not payload.external_id:
         raise HTTPException(
@@ -393,6 +454,9 @@ def retry_answer(
         db.flush()
         orig_si = msg.sort_index
         next_si = nxt.sort_index if nxt is not None else None
+    # The worker thread below uses its own DB session — commit the (possibly
+    # renumbered) sort_index values now so the stream phase sees them.
+    db.commit()
 
     # Context exactly as the original model saw it: everything up to and
     # including the question, nothing after it.
@@ -406,54 +470,68 @@ def retry_answer(
         messages.append({"role": m.role, "content": m.content})
 
     models = list(dict.fromkeys(payload.models))[:20]
-    responses: dict[str, ChatResponseItem] = {}
-    assistant_ids: dict[str, int] = {}
 
-    with ThreadPoolExecutor(max_workers=min(len(models), 8)) as pool:
-        future_map = {pool.submit(call_model, model, messages,
-                                  temperature=payload.temperature,
-                                  max_tokens=payload.max_tokens,
-                                  reasoning_effort=payload.reasoning_effort): model
-                      for model in models}
-        for future in as_completed(future_map):
-            item = future.result()
-            responses[item.model] = item
+    # Values the worker thread needs, captured before streaming starts.
+    conv_id = conv.id
+    conv_external_id = conv.external_id
+    source_message_id = msg.id
 
-            if item.ok and item.content:
-                # Slot between the anchor message and the next one; each fresh
-                # answer gets its own slice of the gap.
-                if next_si is not None:
-                    step = (next_si - orig_si) / (len(models) + 1)
-                    slot = orig_si + step * (models.index(item.model) + 1)
-                else:
-                    slot = orig_si + models.index(item.model) + 1
-                assistant_msg = Message(
-                    conversation_id=conv.id,
-                    role="assistant",
-                    content=item.content,
-                    model=item.model,
-                    reasoning=item.reasoning,
-                    provider=item.provider,
-                    gen_id=item.gen_id,
-                    tokens_prompt=item.tokens_prompt,
-                    tokens_cached=item.tokens_cached,
-                    tokens_completion=item.tokens_completion,
-                    total_tokens=item.total_tokens,
-                    cost=item.cost,
-                    sort_index=slot,
-                )
-                db.add(assistant_msg)
-                db.flush()
-                assistant_ids[item.model] = assistant_msg.id
-    conv.updated_at = utcnow()
-    db.commit()
+    def _finish_retry() -> RetryResponse:
+        work_db = SessionLocal()
+        try:
+            responses: dict[str, ChatResponseItem] = {}
+            assistant_ids: dict[str, int] = {}
 
-    ordered = [responses[m] for m in models if m in responses] or []
-    for item in ordered:
-        item.message_id = assistant_ids.get(item.model)
-    return RetryResponse(
-        conversation_id=conv.id,
-        external_id=conv.external_id,
-        source_message_id=msg.id,
-        responses=ordered,
-    )
+            with ThreadPoolExecutor(max_workers=min(len(models), 8) or 1) as pool:
+                future_map = {pool.submit(call_model, model, messages,
+                                          temperature=payload.temperature,
+                                          max_tokens=payload.max_tokens,
+                                          reasoning_effort=payload.reasoning_effort): model
+                              for model in models}
+                for future in as_completed(future_map):
+                    item = future.result()
+                    responses[item.model] = item
+
+                    if item.ok and item.content:
+                        # Slot between the anchor message and the next one; each
+                        # fresh answer gets its own slice of the gap.
+                        if next_si is not None:
+                            step = (next_si - orig_si) / (len(models) + 1)
+                            slot = orig_si + step * (models.index(item.model) + 1)
+                        else:
+                            slot = orig_si + models.index(item.model) + 1
+                        assistant_msg = Message(
+                            conversation_id=conv_id,
+                            role="assistant",
+                            content=item.content,
+                            model=item.model,
+                            reasoning=item.reasoning,
+                            provider=item.provider,
+                            gen_id=item.gen_id,
+                            tokens_prompt=item.tokens_prompt,
+                            tokens_cached=item.tokens_cached,
+                            tokens_completion=item.tokens_completion,
+                            total_tokens=item.total_tokens,
+                            cost=item.cost,
+                            sort_index=slot,
+                        )
+                        work_db.add(assistant_msg)
+                        work_db.flush()
+                        assistant_ids[item.model] = assistant_msg.id
+            conv_ref = work_db.get(Conversation, conv_id)
+            conv_ref.updated_at = utcnow()
+            work_db.commit()
+
+            ordered = [responses[m] for m in models if m in responses] or []
+            for item in ordered:
+                item.message_id = assistant_ids.get(item.model)
+            return RetryResponse(
+                conversation_id=conv_id,
+                external_id=conv_external_id,
+                source_message_id=source_message_id,
+                responses=ordered,
+            )
+        finally:
+            work_db.close()
+
+    return sse_json_response(_finish_retry)

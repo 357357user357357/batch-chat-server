@@ -189,6 +189,63 @@ async function api(path, options = {}) {
   return resp.json();
 }
 
+// Same conventions as api(), but for the chat endpoints that stream their
+// JSON answer as Server-Sent Events (": ping" keep-alive comments while the
+// model queues, then one "data: {...}" event — "event: error" on failure).
+// Reading the stream keeps the connection alive through NATs/middleboxes that
+// kill silent connections during long ":flex" waits (raw "Failed to fetch").
+async function apiStream(path, options = {}) {
+  const headers = { ...(options.headers || {}) };
+  if (state.token) headers["Authorization"] = `Bearer ${state.token}`;
+  if (options.body && !headers["Content-Type"]) headers["Content-Type"] = "application/json";
+
+  const resp = await fetch(path, { ...options, headers });
+  if (resp.status === 401 && !options.noLogout) {
+    logout();
+    throw new Error("Session expired. Please log in again.");
+  }
+  if (!resp.ok) {
+    let detail = `HTTP ${resp.status}`;
+    try {
+      const data = await resp.json();
+      detail = data.detail || detail;
+    } catch { /* ignore */ }
+    throw new Error(detail);
+  }
+  if (!resp.body || !resp.body.getReader) return resp.json(); // very old browser
+
+  const reader = resp.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = "";
+  let result = null;
+  let streamError = null;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf += decoder.decode(value, { stream: true });
+    let sep;
+    while ((sep = buf.indexOf("\n\n")) >= 0) {
+      const block = buf.slice(0, sep);
+      buf = buf.slice(sep + 2);
+      let isError = false;
+      let dataText = null;
+      for (const line of block.split("\n")) {
+        if (!line || line.startsWith(":")) continue; // keep-alive ping
+        if (line.startsWith("event:")) isError = line.slice(6).trim() === "error";
+        else if (line.startsWith("data:")) dataText = line.slice(5).trim();
+      }
+      if (dataText == null) continue;
+      try {
+        const parsed = JSON.parse(dataText);
+        if (isError) streamError = new Error(parsed.error || "Request failed");
+        else result = parsed;
+      } catch { /* ignore malformed events */ }
+    }
+  }
+  if (!result && streamError) throw streamError;
+  return result;
+}
+
 // ---------------------------------------------------------------
 // Auth
 // ---------------------------------------------------------------
@@ -1324,7 +1381,7 @@ async function doRetry(msg, models, btn, node) {
   btn.disabled = true;
   btn.textContent = "Retrying…";
   try {
-    const resp = await api("/api/chat/retry", {
+    const resp = await apiStream("/api/chat/retry", {
       method: "POST",
       body: JSON.stringify({
         conversation_id: state.currentConversationId,
@@ -1799,7 +1856,7 @@ els.chatForm.addEventListener("submit", async (e) => {
   els.sendBtn.textContent = "Sending…";
 
   try {
-    const resp = await api("/api/chat/send", {
+    const resp = await apiStream("/api/chat/send", {
       method: "POST",
       body: JSON.stringify({
         user_message: text,

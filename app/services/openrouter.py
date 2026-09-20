@@ -1,3 +1,4 @@
+import json
 import re
 import time
 
@@ -223,6 +224,116 @@ def chat_completion(
     )["content"]
 
 
+def parse_sse_chat_stream(lines) -> dict:
+    """Fold an OpenAI-compatible SSE line iterable into the same dict shape
+    the buffered chat/completions body produces (content + usage metadata).
+
+    Chat answers are fetched with `"stream": true` on purpose: while a queued
+    ":flex" request waits, OpenRouter ships keep-alive comment lines
+    (": OPENROUTER PROCESSING"), so neither httpx's per-read timeout nor any
+    NAT'd connection in between ever sees a silent gap — buffered requests
+    died on exactly that.
+    """
+    content_parts: list[str] = []
+    provider: str | None = None
+    gen_id: str | None = None
+    usage: dict = {}
+    for raw in lines:
+        if isinstance(raw, bytes):
+            raw = raw.decode("utf-8", "replace")
+        line = raw.strip()
+        if not line or line.startswith(":"):
+            continue  # keep-alive comment (": OPENROUTER PROCESSING")
+        if not line.startswith("data:"):
+            continue  # OpenRouter uses no other SSE fields here
+        data = line[len("data:"):].strip()
+        if data == "[DONE]":
+            break
+        try:
+            chunk = json.loads(data)
+        except ValueError:
+            continue  # tolerate a malformed line instead of losing the answer
+        if not isinstance(chunk, dict):
+            continue
+        if isinstance(chunk.get("id"), str) and chunk["id"]:
+            gen_id = chunk["id"]
+        if isinstance(chunk.get("provider"), str) and chunk["provider"]:
+            provider = chunk["provider"]
+        if isinstance(chunk.get("usage"), dict) and chunk["usage"]:
+            usage = chunk["usage"]  # final chunk, thanks to usage.include
+        choices = chunk.get("choices")
+        if isinstance(choices, list) and choices and isinstance(choices[0], dict):
+            delta = choices[0].get("delta")
+            if isinstance(delta, dict) and isinstance(delta.get("content"), str):
+                content_parts.append(delta["content"])
+    prompt_details = usage.get("prompt_tokens_details")
+    if not isinstance(prompt_details, dict):
+        prompt_details = {}
+    return {
+        "content": "".join(content_parts),
+        "provider": provider,
+        "gen_id": gen_id,
+        "tokens_prompt": usage.get("prompt_tokens"),
+        "tokens_cached": prompt_details.get("cached_tokens"),
+        "tokens_completion": usage.get("completion_tokens"),
+        "total_tokens": usage.get("total_tokens"),
+        "cost": usage.get("cost"),
+    }
+
+
+def _chat_payload(
+    base_model: str,
+    tier: str | None,
+    messages: list[dict],
+    temperature: float | None,
+    max_tokens: int | None,
+    reasoning_effort: str | None,
+) -> dict:
+    payload: dict = {"model": base_model, "messages": messages, "stream": True}
+    if temperature is not None:
+        payload["temperature"] = temperature
+    if max_tokens is not None:
+        payload["max_tokens"] = max_tokens
+    if tier == "flex":
+        payload["service_tier"] = "flex"
+    if reasoning_effort == "none":
+        payload["reasoning"] = {"enabled": False}
+    elif reasoning_effort:
+        payload["reasoning"] = {"effort": reasoning_effort}
+    # Ask OpenRouter to report exact usage (token counts + cost) — with
+    # streaming it arrives in the final chunk's `usage` field. Without this,
+    # streamed generations can end up as 0-tok/$0.00 rows in the logs page.
+    payload["usage"] = {"include": True}
+    return payload
+
+
+def _stream_chat_once(payload: dict) -> tuple[int, str, dict | None]:
+    """One streamed chat attempt → (status_code, error_text, parsed_data).
+
+    status_code 0 means a transport-level failure (error_text has the
+    detail). REQUEST_TIMEOUT's read component acts as an IDLE timeout here:
+    OpenRouter's keep-alives during flex queueing keep resetting it, while a
+    genuinely dead connection still fails after 180 s of silence.
+    """
+    try:
+        with httpx.Client(timeout=REQUEST_TIMEOUT) as client:
+            with client.stream(
+                "POST",
+                f"{settings.openrouter_base_url}/chat/completions",
+                headers=_headers(),
+                json=payload,
+            ) as resp:
+                if resp.status_code >= 400:
+                    try:
+                        resp.read()  # load the body so _safe_error can parse it
+                    except httpx.HTTPError:
+                        pass
+                    return resp.status_code, _safe_error(resp), None
+                return 200, "", parse_sse_chat_stream(resp.iter_lines())
+    except httpx.HTTPError as exc:
+        return 0, f"Request failed: {exc}", None
+
+
 def chat_completion_full(
     model: str,
     messages: list[dict[str, str]],
@@ -237,123 +348,63 @@ def chat_completion_full(
     unified `reasoning` parameter: "none" disables reasoning entirely, any of
     low/medium/high/xhigh/max sets the effort level. None (default) leaves the
     model's own default untouched.
+
+    The request is STREAMED (SSE): OpenRouter sends keep-alive comments while
+    a ":flex" request sits in the provider queue, which keeps the connection
+    alive through long waits that killed the old buffered request.
     """
     _require_key()
     base_model, tier = split_model_variant(model)
     messages = _with_prompt_cache(messages, settings.cache_duration_seconds)
 
-    payload: dict = {"model": base_model, "messages": messages}
-    if temperature is not None:
-        payload["temperature"] = temperature
-    if max_tokens is not None:
-        payload["max_tokens"] = max_tokens
-    if tier == "flex":
-        payload["service_tier"] = "flex"
-    if reasoning_effort == "none":
-        payload["reasoning"] = {"enabled": False}
-    elif reasoning_effort:
-        payload["reasoning"] = {"effort": reasoning_effort}
-    # Ask OpenRouter to report exact usage (token counts + cost) in the
-    # response. Without this, streaming/estimated generations can end up as
-    # 0-tok/$0.00 rows in the OpenRouter logs page.
-    payload["usage"] = {"include": True}
+    payload = _chat_payload(
+        base_model, tier, messages, temperature, max_tokens, reasoning_effort
+    )
 
-    try:
-        with httpx.Client(timeout=REQUEST_TIMEOUT) as client:
-            resp = client.post(
-                f"{settings.openrouter_base_url}/chat/completions",
-                headers=_headers(),
-                json=payload,
-            )
-            if resp.status_code >= 400:
-                error_text = _safe_error(resp)
-                # Flex tier not available for this model → standard tier
-                if (
-                    tier == "flex"
-                    and is_flex_unsupported_error(resp.status_code, error_text)
-                ):
-                    payload.pop("service_tier", None)
-                    resp = client.post(
-                        f"{settings.openrouter_base_url}/chat/completions",
-                        headers=_headers(),
-                        json=payload,
-                    )
-                    error_text = _safe_error(resp) if resp.status_code >= 400 else ""
-                # Reasoning param rejected (e.g. "Reasoning is mandatory for
-                # this endpoint and cannot be disabled" on reasoning-only
-                # models) → retry once without it (model default applies).
-                if (
-                    resp.status_code >= 400
-                    and "reasoning" in payload
-                    and _is_reasoning_unsupported_error(resp.status_code, error_text)
-                ):
-                    payload.pop("reasoning", None)
-                    resp = client.post(
-                        f"{settings.openrouter_base_url}/chat/completions",
-                        headers=_headers(),
-                        json=payload,
-                    )
-                # Provider caps max output tokens below what was requested
-                # (OpenRouter substitutes the model's catalog maximum when the
-                # request omits max_tokens; e.g. Google: "Requested maximum
-                # tokens of 131072 exceeds the maximum output tokens limit:
-                # 102400") → retry once clamped to that limit.
-                if resp.status_code >= 400:
-                    token_limit = _max_token_limit_from_error(_safe_error(resp))
-                    if token_limit:
-                        payload["max_tokens"] = token_limit
-                        resp = client.post(
-                            f"{settings.openrouter_base_url}/chat/completions",
-                            headers=_headers(),
-                            json=payload,
-                        )
-                if resp.status_code >= 400:
-                    raise OpenRouterError(
-                        f"OpenRouter error (HTTP {resp.status_code}): "
-                        f"{_safe_error(resp)}"
-                    )
-            data = resp.json()
-    except httpx.HTTPError as exc:
-        raise OpenRouterError(f"Request failed: {exc}") from exc
+    status, error_text, data = _stream_chat_once(payload)
+    if status == 0:
+        raise OpenRouterError(error_text)
+    if status >= 400:
+        # Flex tier not available for this model → standard tier
+        if tier == "flex" and is_flex_unsupported_error(status, error_text):
+            payload.pop("service_tier", None)
+            status, error_text, data = _stream_chat_once(payload)
+        # Reasoning param rejected (e.g. "Reasoning is mandatory for this
+        # endpoint and cannot be disabled" on reasoning-only models) → retry
+        # once without it (model default applies).
+        if (
+            status >= 400
+            and "reasoning" in payload
+            and is_reasoning_unsupported_error(status, error_text)
+        ):
+            payload.pop("reasoning", None)
+            status, error_text, data = _stream_chat_once(payload)
+        # Provider caps max output tokens below what was requested
+        # (OpenRouter substitutes the model's catalog maximum when the
+        # request omits max_tokens; e.g. Google: "Requested maximum tokens
+        # of 131072 exceeds the maximum output tokens limit: 102400") →
+        # retry once clamped to that limit.
+        if status >= 400:
+            token_limit = _max_token_limit_from_error(error_text)
+            if token_limit:
+                payload["max_tokens"] = token_limit
+                status, error_text, data = _stream_chat_once(payload)
+        if status >= 400:
+            raise OpenRouterError(f"OpenRouter error (HTTP {status}): {error_text}")
 
-    try:
-        content = data["choices"][0]["message"]["content"]
-    except (KeyError, IndexError, TypeError) as exc:
-        raise OpenRouterError(f"Unexpected response from OpenRouter: {data!r}") from exc
-
+    content = data["content"]
     if not isinstance(content, str) or not content.strip():
         # Rare provider hiccup: HTTP 200 with empty content (seen on flaky
         # Astra/Google endpoints) → one automatic retry before surfacing an
         # empty answer to the user.
-        try:
-            with httpx.Client(timeout=REQUEST_TIMEOUT) as retry_client:
-                retry_resp = retry_client.post(
-                    f"{settings.openrouter_base_url}/chat/completions",
-                    headers=_headers(),
-                    json=payload,
-                )
-                if retry_resp.status_code < 400:
-                    data = retry_resp.json()
-                    content = data["choices"][0]["message"]["content"]
-        except (httpx.HTTPError, KeyError, IndexError, TypeError):
-            pass  # keep the original (empty) result rather than erroring
-
-    usage = data.get("usage") or {}
-    if not isinstance(usage, dict):
-        usage = {}
-    prompt_details = usage.get("prompt_tokens_details")
-    if not isinstance(prompt_details, dict):
-        prompt_details = {}
-    return {
-        "content": content,
-        "provider": data.get("provider"),
-        "gen_id": data.get("id"),
-        "tokens_prompt": usage.get("prompt_tokens"),
-        "tokens_cached": prompt_details.get("cached_tokens"),
-        "tokens_completion": usage.get("completion_tokens"),
-        "total_tokens": usage.get("total_tokens"),
-        "cost": usage.get("cost"),
-    }
+        retry_status, _retry_error, retry_data = _stream_chat_once(payload)
+        if (
+            retry_status == 200
+            and isinstance(retry_data["content"], str)
+            and retry_data["content"].strip()
+        ):
+            data = retry_data
+    return data
 
 
 # ---------------------------------------------------------------------------

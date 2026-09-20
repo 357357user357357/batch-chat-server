@@ -6,6 +6,7 @@ test_jsonl_batches; the provider status checks point at a tiny local mock
 (monkeypatched base URL / usage URL) so no real provider is ever contacted.
 """
 
+import json
 import os
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -23,6 +24,17 @@ from app.models import AppSetting  # noqa: E402
 from app.services.openrouter import chat_completion_full  # noqa: E402
 
 client = TestClient(app)
+
+
+def sse_data(resp) -> dict:
+    """Final `data:` JSON event of an SSE chat response (/api/chat/send)."""
+    events = [
+        line[len("data: "):]
+        for line in resp.text.splitlines()
+        if line.startswith("data: ")
+    ]
+    assert events, f"no SSE data event in: {resp.text[:400]}"
+    return json.loads(events[-1])
 
 MOCK_PORT = 8893
 MOCK_BASE = f"http://127.0.0.1:{MOCK_PORT}"
@@ -51,6 +63,24 @@ class Handler(BaseHTTPRequestHandler):
             self._send(404, {})
 
     def do_POST(self):
+        body = self._read_body()
+        if body.get("stream"):
+            # Chat answers stream (SSE): keep-alive comment, content delta,
+            # final usage chunk, [DONE].
+            self._send_sse(
+                200,
+                content="hi there",
+                gen_id="gen-mock",
+                provider="Mock",
+                usage={
+                    "prompt_tokens": 100,
+                    "completion_tokens": 10,
+                    "total_tokens": 110,
+                    "cost": 0.0007,
+                    "prompt_tokens_details": {"cached_tokens": 60},
+                },
+            )
+            return
         self._send(200, {
             "choices": [{"message": {"role": "assistant", "content": "hi there"}}],
             "usage": {
@@ -61,6 +91,36 @@ class Handler(BaseHTTPRequestHandler):
                 "prompt_tokens_details": {"cached_tokens": 60},
             },
         })
+
+    def _read_body(self):
+        length = int(self.headers.get("Content-Length", "0") or 0)
+        raw = self.rfile.read(length) if length else b"{}"
+        try:
+            return __import__("json").loads(raw)
+        except ValueError:
+            return {}
+
+    def _send_sse(self, code: int, content: str, gen_id: str,
+                  provider: str, usage: dict):
+        import json as _json
+
+        def event(obj) -> bytes:
+            return (_json.dumps(obj) + "\n\n").encode()
+
+        payload = b"".join([
+            b": OPENROUTER PROCESSING\n\n",
+            event({"id": gen_id, "provider": provider,
+                   "choices": [{"delta": {"content": content}}]}),
+            event({"id": gen_id, "provider": provider,
+                   "choices": [{"delta": {}, "finish_reason": "stop"}],
+                   "usage": usage}),
+            b"data: [DONE]\n\n",
+        ])
+        self.send_response(code)
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Content-Length", str(len(payload)))
+        self.end_headers()
+        self.wfile.write(payload)
 
     def _send(self, code: int, obj: dict):
         data = __import__("json").dumps(obj).encode()
@@ -183,22 +243,32 @@ def test_chat_completion_full_extracts_cached_tokens(monkeypatch):
     class FakeResponse:
         status_code = 200
 
-        def raise_for_status(self):
-            pass
+        def __init__(self):
+            self._sse = [
+                'data: {"id": "gen-1", "provider": "Mock", '
+                '"choices": [{"delta": {"content": "ok"}}]}',
+                'data: {"choices": [{"delta": {}, "finish_reason": "stop"}],'
+                ' "usage": {"prompt_tokens": 500, "completion_tokens": 20,'
+                ' "total_tokens": 520, "cost": 0.001,'
+                ' "prompt_tokens_details": {"cached_tokens": 350}}}',
+                "data: [DONE]",
+            ]
 
-        def json(self):
-            return {
-                "choices": [{"message": {"role": "assistant", "content": "ok"}}],
-                "provider": "Mock",
-                "id": "gen-1",
-                "usage": {
-                    "prompt_tokens": 500,
-                    "completion_tokens": 20,
-                    "total_tokens": 520,
-                    "cost": 0.001,
-                    "prompt_tokens_details": {"cached_tokens": 350},
-                },
-            }
+        def read(self):
+            return b""
+
+        def iter_lines(self):
+            return iter(self._sse)
+
+    class FakeStream:
+        def __init__(self, response):
+            self._response = response
+
+        def __enter__(self):
+            return self._response
+
+        def __exit__(self, *a):
+            return False
 
     class FakeClient:
         def __init__(self, *a, **k):
@@ -210,8 +280,8 @@ def test_chat_completion_full_extracts_cached_tokens(monkeypatch):
         def __exit__(self, *a):
             return False
 
-        def post(self, *a, **k):
-            return FakeResponse()
+        def stream(self, method, url, headers=None, json=None):
+            return FakeStream(FakeResponse())
 
     import httpx
 
@@ -245,10 +315,11 @@ def test_chat_send_persists_and_reports_cached_tokens(monkeypatch):
         json={"user_message": "cache me", "models": ["test/model"]},
     )
     assert resp.status_code == 200, resp.text
-    item = resp.json()["responses"][0]
+    data = sse_data(resp)
+    item = data["responses"][0]
     assert item["tokens_cached"] == 350
 
-    detail = client.get(f"/api/conversations/{resp.json()['conversation_id']}", headers=headers).json()
+    detail = client.get(f"/api/conversations/{data['conversation_id']}", headers=headers).json()
     stored = next(m for m in detail["messages"] if m["content"] == "cached answer")
     assert stored["tokens_cached"] == 350
 
@@ -272,7 +343,7 @@ def test_sync_pull_carries_cached_tokens(monkeypatch):
         "/api/chat/send", headers=headers,
         json={"user_message": "sync me", "models": ["test/model"]},
     )
-    cid = resp.json()["conversation_id"]
+    cid = sse_data(resp)["conversation_id"]
     pulled = client.get("/api/sync/pull", headers=headers).json()["conversations"]
     dlg = next(c for c in pulled if c["external_id"] == f"srv-{cid}")
     msg = next(m for m in dlg["messages"] if m["content"] == "sync cached")

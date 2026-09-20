@@ -5,6 +5,7 @@ question, not the old answer), metadata persistence, the phone's external_id
 path and the error cases.
 """
 
+import json
 import os
 
 os.environ.setdefault("APP_PASSWORD", "test")
@@ -16,6 +17,19 @@ from app.main import app  # noqa: E402
 from app.services.provider_errors import ProviderError  # noqa: E402
 
 client = TestClient(app)
+
+
+def sse_data(resp) -> dict:
+    """Final `data:` JSON event of an SSE chat response (/api/chat/send and
+    /api/chat/retry stream their answer: `: ping` keep-alives + one data:
+    event carrying the payload the endpoint used to return as a body)."""
+    events = [
+        line[len("data: "):]
+        for line in resp.text.splitlines()
+        if line.startswith("data: ")
+    ]
+    assert events, f"no SSE data event in: {resp.text[:400]}"
+    return json.loads(events[-1])
 
 
 def auth_headers() -> dict:
@@ -70,7 +84,7 @@ def test_retry_reanswers_in_place_with_context_cutoff(monkeypatch):
         },
     )
     assert resp.status_code == 200, resp.text
-    data = resp.json()
+    data = sse_data(resp)
     assert data["conversation_id"] == cid
     assert data["source_message_id"] == a1_id
     assert data["responses"][0]["ok"] is True
@@ -129,7 +143,7 @@ def test_retry_on_question_reasks_with_context_cutoff(monkeypatch):
         },
     )
     assert resp.status_code == 200, resp.text
-    data = resp.json()
+    data = sse_data(resp)
     assert data["conversation_id"] == cid
     assert data["source_message_id"] == q1_id
     assert data["responses"][0]["ok"] is True
@@ -181,7 +195,7 @@ def test_retry_persists_openrouter_metadata(monkeypatch):
               "models": ["other/model-b"], "reasoning_effort": "high"},
     )
     assert resp.status_code == 200, resp.text
-    item = resp.json()["responses"][0]
+    item = sse_data(resp)["responses"][0]
     assert item["reasoning"] == "high"
     assert item["provider"] == "TestProvider"
     assert item["gen_id"] == "gen-retry-1"
@@ -259,7 +273,7 @@ def test_retry_via_external_id_phone_path(monkeypatch):
               "models": ["other/model-c"]},
     )
     assert resp.status_code == 200, resp.text
-    data = resp.json()
+    data = sse_data(resp)
     assert data["external_id"] == "retry-ext-dlg"
 
     pulled = client.get("/api/sync/pull", headers=headers).json()["conversations"]
@@ -301,7 +315,7 @@ def test_retry_failed_model_persists_nothing(monkeypatch):
         json={"conversation_id": cid, "message_id": a1_id, "models": ["dead/model"]},
     )
     assert resp.status_code == 200, resp.text
-    item = resp.json()["responses"][0]
+    item = sse_data(resp)["responses"][0]
     assert item["ok"] is False
     assert item["message_id"] is None
     assert "Model" in item["error"] or "error" in item["error"].lower()

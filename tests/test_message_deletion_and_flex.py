@@ -5,6 +5,7 @@ Also covers the OpenAI Flex processing tier (":flex" model suffix) and its
 automatic fallback to the standard tier when the provider rejects it.
 """
 
+import json
 import os
 
 os.environ.setdefault("APP_PASSWORD", "test")
@@ -20,6 +21,18 @@ from app.services.openrouter import (  # noqa: E402
 )
 
 client = TestClient(app)
+
+
+def sse_data(resp) -> dict:
+    """Final `data:` JSON event of an SSE chat response (/api/chat/send
+    streams `: ping` keep-alives + one data: event with the payload)."""
+    events = [
+        line[len("data: "):]
+        for line in resp.text.splitlines()
+        if line.startswith("data: ")
+    ]
+    assert events, f"no SSE data event in: {resp.text[:400]}"
+    return json.loads(events[-1])
 
 
 def login() -> str:
@@ -341,7 +354,7 @@ def test_chat_send_reports_web_search_used(monkeypatch):
         json={"user_message": "search please", "models": ["openai/gpt-4o-mini"], "web_search": True},
     )
     assert resp.status_code == 200, resp.text
-    data = resp.json()
+    data = sse_data(resp)
     assert data["web_search_used"] is True
 
     # Web search off -> web_search_used false (no hidden injection)
@@ -351,7 +364,7 @@ def test_chat_send_reports_web_search_used(monkeypatch):
         json={"user_message": "no search", "models": ["openai/gpt-4o-mini"], "web_search": False},
     )
     assert resp.status_code == 200, resp.text
-    assert resp.json()["web_search_used"] is False
+    assert sse_data(resp)["web_search_used"] is False
 
 
 def test_chat_send_injects_server_datetime(monkeypatch):
@@ -386,12 +399,31 @@ def test_chat_completion_falls_back_when_flex_rejected(monkeypatch):
     calls = []
 
     class FakeResponse:
-        def __init__(self, status_code, payload):
+        def __init__(self, status_code, payload=None, sse=None):
             self.status_code = status_code
             self._payload = payload
+            self._sse = sse or []
 
         def json(self):
             return self._payload
+
+        def read(self):
+            return b""
+
+        def iter_lines(self):
+            return iter(self._sse)
+
+    class FakeStream:
+        """httpx client.stream(...) context manager around one fake response."""
+
+        def __init__(self, response):
+            self._response = response
+
+        def __enter__(self):
+            return self._response
+
+        def __exit__(self, *args):
+            return False
 
     class FakeClient:
         def __init__(self, *args, **kwargs):
@@ -403,21 +435,22 @@ def test_chat_completion_falls_back_when_flex_rejected(monkeypatch):
         def __exit__(self, *args):
             return False
 
-        def post(self, url, headers=None, json=None):
+        def stream(self, method, url, headers=None, json=None):
             calls.append(dict(json))  # snapshot: the code mutates the payload
             if json.get("service_tier") == "flex":
-                return FakeResponse(
+                return FakeStream(FakeResponse(
                     400,
-                    {
-                        "error": {
-                            "message": "service_tier 'flex' is not supported for this model"
-                        }
-                    },
-                )
-            return FakeResponse(
-                200,
-                {"choices": [{"message": {"content": "hello from astra"}}]},
-            )
+                    {"error": {
+                        "message": "service_tier 'flex' is not supported for this model"
+                    }},
+                ))
+            return FakeStream(FakeResponse(200, sse=[
+                ": OPENROUTER PROCESSING",
+                'data: {"id": "gen-astra-1", "provider": "Astra", '
+                '"choices": [{"delta": {"content": "hello from astra"}}]}',
+                'data: {"choices": [{"delta": {}, "finish_reason": "stop"}]}',
+                "data: [DONE]",
+            ]))
 
     import httpx
 
@@ -438,8 +471,24 @@ def test_chat_completion_sends_base_model_for_plain_models(monkeypatch):
     class FakeResponse:
         status_code = 200
 
-        def json(self):
-            return {"choices": [{"message": {"content": "ok"}}]}
+        def __init__(self, sse=None):
+            self._sse = sse or []
+
+        def read(self):
+            return b""
+
+        def iter_lines(self):
+            return iter(self._sse)
+
+    class FakeStream:
+        def __init__(self, response):
+            self._response = response
+
+        def __enter__(self):
+            return self._response
+
+        def __exit__(self, *args):
+            return False
 
     class FakeClient:
         def __init__(self, *args, **kwargs):
@@ -451,9 +500,12 @@ def test_chat_completion_sends_base_model_for_plain_models(monkeypatch):
         def __exit__(self, *args):
             return False
 
-        def post(self, url, headers=None, json=None):
+        def stream(self, method, url, headers=None, json=None):
             calls.append(json)
-            return FakeResponse()
+            return FakeStream(FakeResponse(sse=[
+                'data: {"choices": [{"delta": {"content": "ok"}}]}',
+                "data: [DONE]",
+            ]))
 
     import httpx
 
@@ -737,11 +789,25 @@ def test_reasoning_effort_reaches_openrouter_payload(monkeypatch):
     calls = []
 
     class FakeResponse:
-        def __init__(self, status_code=200):
+        def __init__(self, status_code=200, sse=None):
             self.status_code = status_code
+            self._sse = sse or []
 
-        def json(self):
-            return {"choices": [{"message": {"content": "ok"}}]}
+        def read(self):
+            return b""
+
+        def iter_lines(self):
+            return iter(self._sse)
+
+    class FakeStream:
+        def __init__(self, response):
+            self._response = response
+
+        def __enter__(self):
+            return self._response
+
+        def __exit__(self, *args):
+            return False
 
     class FakeClient:
         def __init__(self, *args, **kwargs):
@@ -753,12 +819,15 @@ def test_reasoning_effort_reaches_openrouter_payload(monkeypatch):
         def __exit__(self, *args):
             return False
 
-        def post(self, url, headers=None, json=None):
+        def stream(self, method, url, headers=None, json=None):
             calls.append(dict(json))
             # Reject "none" the way reasoning-mandatory models (astra) do.
             if json.get("reasoning") == {"enabled": False}:
-                return FakeResponse(400)
-            return FakeResponse(200)
+                return FakeStream(FakeResponse(400))
+            return FakeStream(FakeResponse(200, sse=[
+                'data: {"choices": [{"delta": {"content": "ok"}}]}',
+                "data: [DONE]",
+            ]))
 
     def _safe_error(resp):
         return "Reasoning is mandatory for this endpoint and cannot be disabled."
@@ -1510,7 +1579,7 @@ def test_chat_send_records_reasoning_and_usage(monkeypatch):
               "reasoning_effort": "low"},
     )
     assert resp.status_code == 200, resp.text
-    item = resp.json()["responses"][0]
+    item = sse_data(resp)["responses"][0]
     assert item["ok"] is True
     assert item["reasoning"] == "low"
     assert item["provider"] == "Novita"
