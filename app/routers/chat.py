@@ -234,6 +234,15 @@ async def send_chat(
         )
         if conv is None:
             raise HTTPException(status_code=404, detail="Conversation not found")
+        # The web mode toggle (Live / ⚡Flex / ⚡Batch) is global, so a user can
+        # keep chatting in an existing conversation under a different mode than
+        # it was created with. Re-file the conversation so the phone's section
+        # follows the CURRENT mode: a ⚡ Batch message moves a kind=chat
+        # conversation into the phone's Batch tab (and a live/flex message
+        # moves it back). The updated_at bump below (message store) makes the
+        # flip propagate on the next incremental sync pull.
+        if payload.kind in ("chat", "batch") and conv.kind != payload.kind:
+            conv.kind = payload.kind
     else:
         title = (payload.user_message[:50] + "…") if len(payload.user_message) > 50 else payload.user_message
         device = device_label(request)

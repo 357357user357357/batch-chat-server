@@ -142,3 +142,41 @@ def test_send_kind_flag_files_conversation(monkeypatch):
         json={"user_message": "x", "models": ["m/1"], "kind": "weird"},
     )
     assert bad.status_code == 422
+
+
+def test_send_kind_refiles_existing_conversation(monkeypatch):
+    """The web mode toggle is global: a ⚡ Batch message sent into an existing
+    kind=chat conversation re-files it kind=batch (phone moves it to its Batch
+    tab on the next pull), and a live/flex message flips it back to chat."""
+    from app.routers import chat as chat_router
+
+    monkeypatch.setattr(
+        chat_router,
+        "chat_completion_full",
+        lambda model, messages, temperature=None, max_tokens=None,
+        reasoning_effort=None: {"content": "ok"},
+    )
+
+    login = client.post("/api/auth/login", json={"password": "test"}).json()
+    headers = {"Authorization": f"Bearer {login['token']}"}
+
+    resp = client.post(
+        "/api/chat/send", headers=headers,
+        json={"user_message": "started in live mode", "models": ["m/1"]},
+    )
+    assert resp.status_code == 200, resp.text
+    conv_id = json.loads(
+        [ln[len("data: "):] for ln in resp.text.splitlines()
+         if ln.startswith("data: ")][-1]
+    )["conversation_id"]
+
+    for kind, expected in (("batch", "batch"), ("batch", "batch"), ("chat", "chat")):
+        resp = client.post("/api/chat/send", headers=headers, json={
+            "user_message": "mode flip", "models": ["m/1"],
+            "conversation_id": conv_id, "kind": kind,
+        })
+        assert resp.status_code == 200, resp.text
+        convs = client.get("/api/conversations", headers=headers).json()
+        match = [c for c in convs if c["id"] == conv_id]
+        assert match, f"conversation {conv_id} not listed"
+        assert match[0]["kind"] == expected

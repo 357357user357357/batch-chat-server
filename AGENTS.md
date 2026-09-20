@@ -19,7 +19,8 @@ Live deployment check: `SMOKE_PASSWORD=<prod pw> python3 scripts/deploy_smoke.py
 - App-pinning CA for the Android app lives in `certs/` (ca.crt embedded in the app; copy it when migrating servers).
 
 ## Conversation kinds (web ⚡ Batch ↔ phone Batch tab)
-- `/api/chat/send` takes optional `kind` (`chat`|`batch`, default `chat`) on conversation creation. The web UI sends `kind: "batch"` when in ⚡ Batch chat mode — the phone app files `kind='batch'` conversations into its Batch tab and `kind='chat'` into its Chat drawer (see `sync.ts` pull merge).
+- `/api/chat/send` takes optional `kind` (`chat`|`batch`, default `chat`). The web UI sends `kind: "batch"` when in ⚡ Batch chat mode — the phone app files `kind='batch'` conversations into its Batch tab and `kind='chat'` into its Chat drawer (see `sync.ts` pull merge).
+- The web mode toggle (Live / ⚡Flex / ⚡Batch) is GLOBAL (localStorage `bc_chat_mode`), not per-conversation — so kind is RE-FILED on every send into an existing conversation: a ⚡ Batch message flips a kind=chat conversation to batch (and a live/flex message flips it back). The `updated_at` bump on message store propagates the flip via incremental pull. Regression: `test_send_kind_refiles_existing_conversation`.
 - Web batch chats with MULTIPLE models sync only their first answer per prompt into the phone's batch view (`conversationToHistoryItem` maps one assistant per prompt) — phone-side (`batch-chat` repo, sync-mapping.ts) fix pending.
 - Pasting text copied from pages that RENDER math yields one-glyph-per-line + zero-width/PUA garbage; the web composer sanitizes such pastes and `renderRichText` strips invisible chars before markdown/KaTeX.
 
