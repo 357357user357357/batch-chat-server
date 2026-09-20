@@ -1490,6 +1490,12 @@ function renderRichText(container, raw) {
   const escapeHtml = (s) =>
     s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
+  // Zero-width / invisible formatting chars and PUA glyphs ride along when
+  // math is copied from rendered pages; they render as tofu boxes or vanish,
+  // so drop them before any processing. (Plain text never contains them.)
+  // eslint-disable-next-line no-irregular-whitespace
+  raw = raw.replace(/[\u200b-\u200f\u202a-\u202e\u2060-\u2064\u206a-\u206f\ufeff\ue000-\uf8ff]/g, "");
+
   // 1. Code first: fences and inline spans must not be touched by math
   //    wrapping or markdown emphasis. Stored as ready HTML.
   const codeStore = [];
@@ -1862,6 +1868,7 @@ els.chatForm.addEventListener("submit", async (e) => {
         user_message: text,
         models,
         conversation_id: state.currentConversationId,
+        kind: state.chatMode === "batch" ? "batch" : "chat",
         web_search: els.webSearchToggle.checked,
         ...(els.reasoningSelect.value
           ? { reasoning_effort: els.reasoningSelect.value }
@@ -1912,6 +1919,59 @@ els.chatInput.addEventListener("keydown", (e) => {
     els.chatForm.requestSubmit();
   }
 });
+
+// ---------------------------------------------------------------
+// Paste cleanup — text copied out of pages that RENDER math (KaTeX/MathJax,
+// messengers, ChatGPT) arrives as one glyph per line plus invisible junk
+// (zero-width spaces, PUA glyphs). Strip the invisible characters and
+// re-join runs of 1-2 char lines so such pastes stay readable.
+// ---------------------------------------------------------------
+const INVISIBLE_CHARS = /[\u200b-\u200f\u202a-\u202e\u2060-\u2064\u206a-\u206f\ufeff\ue000-\uf8ff]/g;
+
+function sanitizePastedText(text) {
+  const t = text.replace(INVISIBLE_CHARS, "");
+  const lines = t.split("\n");
+  const out = [];
+  let run = [];
+  const flushRun = () => {
+    if (run.length >= 3) {
+      // KaTeX-copy artifact: join the glyph-per-line run back into one line.
+      let joined = "";
+      for (const raw of run) {
+        const piece = raw.trim();
+        if (!piece) continue;
+        if (joined && /[\p{L}\p{N}_]$/u.test(joined) && /^[\p{L}\p{N}_]/u.test(piece)) {
+          joined += " ";
+        }
+        joined += piece;
+      }
+      if (joined) out.push(joined);
+    } else {
+      out.push(...run);
+    }
+    run = [];
+  };
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (trimmed.length > 0 && trimmed.length <= 2) run.push(line);
+    else { flushRun(); out.push(line); }
+  }
+  flushRun();
+  return out.join("\n");
+}
+
+els.chatInput.addEventListener("paste", (e) => {
+  const text = e.clipboardData ? e.clipboardData.getData("text/plain") : "";
+  if (!text) return;
+  const cleaned = sanitizePastedText(text);
+  if (cleaned === text) return;
+  e.preventDefault();
+  const el = e.currentTarget;
+  el.setRangeText(cleaned, el.selectionStart ?? el.value.length,
+    el.selectionEnd ?? el.value.length, "end");
+  el.dispatchEvent(new Event("input", { bubbles: true }));
+});
+
 
 // ---------------------------------------------------------------
 // Footer menu (☰) — reveals Settings / Prompt cache / Log out

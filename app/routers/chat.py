@@ -237,7 +237,8 @@ async def send_chat(
     else:
         title = (payload.user_message[:50] + "…") if len(payload.user_message) > 50 else payload.user_message
         device = device_label(request)
-        conv = Conversation(title=title[:255] or "New chat", kind="chat",
+        conv = Conversation(title=title[:255] or "New chat",
+                            kind=payload.kind if payload.kind in ("chat", "batch") else "chat",
                             account_id=account_id,
                             origin_device=device, modified_by=device)
         db.add(conv)

@@ -137,6 +137,10 @@ class ChatRequest(BaseModel):
 
     user_message: str = Field(min_length=1)
     models: list[str] = Field(min_length=1, max_length=20)
+    # "batch" files the conversation under the phone app's Batch tab (web ⚡
+    # Batch mode = same prompt to several models in parallel); None → "chat".
+    kind: str | None = Field(default=None, pattern="^(chat|batch)$")
+
     conversation_id: int | None = None
     system: str | None = None
     temperature: float | None = None

@@ -103,3 +103,42 @@ def test_chat_endpoint_streams_ping_then_payload(monkeypatch):
     assert payload["responses"][0]["content"] == "streamed hello"
     assert payload["responses"][0]["ok"] is True
     assert payload["user_message"]["content"] == "hi"
+
+
+def test_send_kind_flag_files_conversation(monkeypatch):
+    """Web ⚡ Batch mode tags new conversations kind=batch so the phone files
+    them under its Batch tab (they share the same Conversation table);
+    default (live/flex) stays kind=chat."""
+    from app.routers import chat as chat_router
+
+    monkeypatch.setattr(
+        chat_router,
+        "chat_completion_full",
+        lambda model, messages, temperature=None, max_tokens=None,
+        reasoning_effort=None: {"content": "ok"},
+    )
+
+    login = client.post("/api/auth/login", json={"password": "test"}).json()
+    headers = {"Authorization": f"Bearer {login['token']}"}
+
+    for kind, expected in (("batch", "batch"), (None, "chat")):
+        body = {"user_message": "kind check", "models": ["m/1"]}
+        if kind:
+            body["kind"] = kind
+        resp = client.post("/api/chat/send", headers=headers, json=body)
+        assert resp.status_code == 200, resp.text
+        payload = json.loads(
+            [ln[len("data: "):] for ln in resp.text.splitlines()
+             if ln.startswith("data: ")][-1]
+        )
+        convs = client.get("/api/conversations", headers=headers).json()
+        match = [c for c in convs if c["id"] == payload["conversation_id"]]
+        assert match, f"conversation {payload['conversation_id']} not listed"
+        assert match[0]["kind"] == expected
+
+    # Unknown kinds are rejected by the schema.
+    bad = client.post(
+        "/api/chat/send", headers=headers,
+        json={"user_message": "x", "models": ["m/1"], "kind": "weird"},
+    )
+    assert bad.status_code == 422
