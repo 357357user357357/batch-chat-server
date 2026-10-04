@@ -14,7 +14,6 @@ from sqlalchemy.orm import selectinload  # noqa: E402
 from app.database import SessionLocal  # noqa: E402
 from app.main import app  # noqa: E402
 from app.models import Conversation  # noqa: E402
-from app.services.settings_store import save_overrides  # noqa: E402
 
 client = TestClient(app)
 
@@ -172,43 +171,8 @@ def test_settings_backup_requires_auth():
 
 
 # ---------------------------------------------------------------------------
-# Unified provider keys + delete-as-archive
+# Delete-as-archive
 # ---------------------------------------------------------------------------
-
-def test_sync_exchanges_provider_keys():
-    """A device fills gaps on the server (server-first), and the server shares
-    its keys back down on pull."""
-    headers = auth_headers()
-
-    db = SessionLocal()
-    try:
-        # Server already has its own OpenRouter key, but Tavily is empty.
-        save_overrides(db, {"openrouter_api_key": "sk-or-v1-server", "tavily_api_key": ""})
-    finally:
-        db.close()
-
-    resp = client.post(
-        "/api/sync/push",
-        headers=headers,
-        json={
-            "dialogs": [],
-            "batches": [],
-            "deleted_external_ids": [],
-            "keys": {
-                "openrouter_api_key": "sk-or-v1-phone",
-                "tavily_api_key": "tvly-phone-secret",
-            },
-        },
-    )
-    assert resp.status_code == 200, resp.text
-
-    view = client.get("/api/settings", headers=headers).json()
-    assert view["tavily_api_key"]["configured"] is True
-
-    pulled = client.get("/api/sync/pull", headers=headers).json()
-    assert pulled["keys"]["openrouter_api_key"] == "sk-or-v1-server"  # not overwritten
-    assert pulled["keys"]["tavily_api_key"] == "tvly-phone-secret"  # adopted
-
 
 def test_delete_preserves_messages_as_archive():
     """Tombstoning a dialog keeps its messages in the DB so the correspondence
@@ -325,6 +289,34 @@ def test_sync_push_pull_roundtrips_per_message_model_and_stats():
     # (phone_sync.dialog_messages backfills `m.model or dialog.model`).
     user = next(m for m in match["messages"] if m["role"] == "user")
     assert user["model"] == "deepseek/deepseek-v4"
+
+
+def test_sync_never_returns_or_adopts_provider_keys():
+    """Provider credentials must stay outside the conversation sync contract."""
+    from app.config import settings
+
+    headers = auth_headers()
+    original = settings.openrouter_api_key
+    settings.openrouter_api_key = "server-secret"
+    try:
+        pulled = client.get("/api/sync/pull", headers=headers)
+        assert pulled.status_code == 200, pulled.text
+        assert "keys" not in pulled.json()
+
+        response = client.post(
+            "/api/sync/push",
+            headers=headers,
+            json={
+                "dialogs": [],
+                "batches": [],
+                "deleted_external_ids": [],
+                "keys": {"openrouter_api_key": "device-secret"},
+            },
+        )
+        assert response.status_code == 200, response.text
+        assert settings.openrouter_api_key == "server-secret"
+    finally:
+        settings.openrouter_api_key = original
 
 
 if __name__ == "__main__":

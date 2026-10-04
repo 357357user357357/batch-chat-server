@@ -48,8 +48,6 @@ from app.services.phone_sync import (
     dialog_messages,
     title_default,
 )
-from app.services.account import default_account_id
-from app.services.settings_store import adopt_missing_keys, syncable_keys
 
 router = APIRouter(prefix="/api/sync", tags=["sync"])
 
@@ -129,13 +127,12 @@ def pull(
                 ],
             )
         )
-    # Provider keys are the OWNER's server credentials — a secondary client
-    # account gets no keys, only the owner account does.
-    keys = syncable_keys() if account_id == default_account_id(db) else {}
+    # Provider credentials are intentionally excluded from sync responses.
+    # They are secrets, not conversation data, and remain server-local or in
+    # the device's secure storage.
     return SyncPullResponse(
         server_time=server_time,
         conversations=out,
-        keys=keys,
     )
 
 
@@ -200,12 +197,8 @@ def push(
             conv.deleted_by = device
             deleted += 1
 
-    # Keys a device offered fill gaps on the server (server-first: an existing
-    # server key is never overwritten). Owner-only: a secondary client account
-    # cannot inject provider credentials into the instance.
-    if account_id == default_account_id(db):
-        adopt_missing_keys(db, payload.keys)
-
+    # Provider credentials are not accepted by this endpoint. They are kept
+    # outside the conversation sync trust boundary.
     db.commit()
     return SyncPushResponse(created=created, updated=updated, deleted=deleted,
                             skipped_deleted=skipped_deleted, server_time=utcnow())
