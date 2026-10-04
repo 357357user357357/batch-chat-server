@@ -40,6 +40,7 @@ class ConversationDetail(BaseModel):
 
     id: int
     external_id: str | None = None
+    persona_id: str | None = None
     kind: str = "chat"
     model: str | None = None
     title: str
@@ -56,6 +57,38 @@ class ConversationCreate(BaseModel):
 
 class ConversationRename(BaseModel):
     title: str = Field(min_length=1, max_length=255)
+
+
+class PersonaCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=64)
+    system_prompt: str = Field(default="", max_length=16000)
+    model: str | None = Field(default=None, max_length=255)
+    temperature: float | None = Field(default=None, ge=0, le=2)
+
+
+class PersonaUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=64)
+    system_prompt: str | None = Field(default=None, max_length=16000)
+    model: str | None = None
+    temperature: float | None = Field(default=None, ge=0, le=2)
+
+
+class PersonaOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    name: str
+    system_prompt: str
+    model: str | None = None
+    temperature: float | None = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+
+class ConversationPersona(BaseModel):
+    """Attach (or clear, with null) the persona a conversation chats with."""
+
+    persona_id: str | None = None
 
 
 class MessageCreate(BaseModel):
@@ -143,6 +176,8 @@ class ChatRequest(BaseModel):
 
     conversation_id: int | None = None
     system: str | None = None
+    # Persona riding along with this send (sticks to the conversation).
+    persona_id: str | None = None
     temperature: float | None = None
     max_tokens: int | None = None
     # Reasoning effort (OpenRouter unified `reasoning` param): "none" disables

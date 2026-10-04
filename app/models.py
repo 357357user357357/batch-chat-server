@@ -69,6 +69,24 @@ class AppSetting(Base):
     updated_at: Mapped[datetime | None] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
 
 
+class Persona(Base):
+    """RikkaHub-style assistant: a named system prompt (+ optional model and
+    temperature defaults) scoped to one account. Conversations reference it
+    by the nullable conversations.persona_id — no FK, so deleting a persona
+    simply leaves dialogs riding without one."""
+
+    __tablename__ = "personas"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    account_id: Mapped[str] = mapped_column(String(64), index=True)
+    name: Mapped[str] = mapped_column(String(64))
+    system_prompt: Mapped[str] = mapped_column(Text, default="")
+    model: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    temperature: Mapped[float | None] = mapped_column(Float, nullable=True)
+    created_at: Mapped[datetime | None] = mapped_column(DateTime, default=utcnow)
+    updated_at: Mapped[datetime | None] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
+
+
 class Conversation(Base):
     __tablename__ = "conversations"
 
@@ -99,6 +117,9 @@ class Conversation(Base):
     # Prompt-cache keep-alive toggle (🔥 Cache button in the web UI): when on,
     # the keeper sends near-empty pings for this dialog's cached prefix.
     keepalive_enabled: Mapped[bool] = mapped_column(default=False)
+    # RikkaHub-style persona riding along with this conversation
+    # (nullable; a persona deleted later just stops riding along).
+    persona_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
 
     messages: Mapped[list["Message"]] = relationship(
         back_populates="conversation",

@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 
 from app.database import SessionLocal, get_db
 from app.device import device_label
-from app.models import Conversation, Message, utcnow
+from app.models import Conversation, Message, Persona, utcnow
 from app.schemas import (
     ChatRequest,
     ChatResponse,
@@ -68,6 +68,20 @@ def sse_json_response(work: Callable[[], "ChatResponse | RetryResponse"]) -> Str
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+def persona_prompt(persona: Persona | None) -> str | None:
+    """The persona's system prompt, or None when there is nothing to inject."""
+    if persona is not None and persona.system_prompt:
+        return persona.system_prompt
+    return None
+
+
+def persona_temperature(persona: Persona | None, explicit: float | None) -> float | None:
+    """The request's temperature wins; otherwise the persona's default."""
+    if explicit is not None:
+        return explicit
+    return persona.temperature if persona is not None else None
 
 
 def system_prompt_with_current_time(user_system: str | None) -> str:
@@ -223,6 +237,19 @@ async def send_chat(
     `data:` event carrying the full ChatResponse JSON (event: error on
     failure). Streaming keeps the browser connection alive through NATs and
     middleboxes that kill silent connections during long ":flex" waits."""
+    # Persona resolution BEFORE any conversation is created: an invalid
+    # persona_id must not leave a fresh empty dialog behind.
+    requested_persona = None
+    if payload.persona_id:
+        requested_persona = db.scalar(
+            select(Persona).where(
+                Persona.id == payload.persona_id,
+                Persona.account_id == account_id,
+            )
+        )
+        if requested_persona is None:
+            raise HTTPException(status_code=404, detail="Persona not found")
+
     # 1. Find or create the conversation (scoped to the calling account)
     if payload.conversation_id is not None:
         conv = db.scalar(
@@ -254,6 +281,24 @@ async def send_chat(
         db.commit()
         db.refresh(conv)
 
+    # A request-level persona sticks to the conversation going forward (the
+    # same "global toggle re-files" philosophy as the chat-mode kind flip).
+    if requested_persona is not None and conv.persona_id != requested_persona.id:
+        conv.persona_id = requested_persona.id
+        conv.updated_at = utcnow()
+        db.commit()
+        db.refresh(conv)
+
+    # An attached persona rides along (a since-deleted one just stops).
+    persona = requested_persona
+    if persona is None and conv.persona_id:
+        persona = db.scalar(
+            select(Persona).where(
+                Persona.id == conv.persona_id, Persona.account_id == account_id
+            )
+        )
+    send_temperature = persona_temperature(persona, payload.temperature)
+
     # 2. Store the user message
     user_msg = Message(
         conversation_id=conv.id,
@@ -281,9 +326,11 @@ async def send_chat(
         )
     ]
 
-    # Optional Tavily web search, injected into the system prompt like the app.
+    # Optional Tavily web search, injected into the system prompt like the
+    # app. An explicit per-send system prompt overrides the persona's.
     system, web_search_used = build_answer_system(
-        payload.system, payload.user_message, payload.web_search
+        payload.system if payload.system is not None else persona_prompt(persona),
+        payload.user_message, payload.web_search
     )
 
     messages: list[dict[str, str]] = []
@@ -309,7 +356,7 @@ async def send_chat(
             # 4. Call every model in parallel with a thread pool
             with ThreadPoolExecutor(max_workers=min(len(limit_models), 8) or 1) as pool:
                 future_map = {pool.submit(call_model, model, messages,
-                                          temperature=payload.temperature,
+                                          temperature=send_temperature,
                                           max_tokens=payload.max_tokens,
                                           reasoning_effort=payload.reasoning_effort): model
                               for model in limit_models}
@@ -469,9 +516,19 @@ async def retry_answer(
     db.commit()
 
     # Context exactly as the original model saw it: everything up to and
-    # including the question, nothing after it.
+    # including the question, nothing after it. The conversation's persona
+    # rides along here too (prompt unless the retry sets one explicitly).
+    persona = None
+    if conv.persona_id:
+        persona = db.scalar(
+            select(Persona).where(
+                Persona.id == conv.persona_id, Persona.account_id == account_id
+            )
+        )
+    retry_temperature = persona_temperature(persona, payload.temperature)
     system, _web_used = build_answer_system(
-        payload.system, question, payload.web_search
+        payload.system if payload.system is not None else persona_prompt(persona),
+        question, payload.web_search
     )
     messages: list[dict[str, str]] = []
     if system:
@@ -494,7 +551,7 @@ async def retry_answer(
 
             with ThreadPoolExecutor(max_workers=min(len(models), 8) or 1) as pool:
                 future_map = {pool.submit(call_model, model, messages,
-                                          temperature=payload.temperature,
+                                          temperature=retry_temperature,
                                           max_tokens=payload.max_tokens,
                                           reasoning_effort=payload.reasoning_effort): model
                               for model in models}

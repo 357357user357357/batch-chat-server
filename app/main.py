@@ -16,7 +16,7 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(levelname)s:%(name)s:%(message)s",
 )
-from app.routers import auth, batches, chat, conversations, export_conversations, graph as graph_router, import_conversations, mathmod, settings as settings_router, stats, sync
+from app.routers import auth, batches, chat, conversations, export_conversations, graph as graph_router, import_conversations, mathmod, personas, settings as settings_router, stats, sync
 from app.services import cache_keeper
 from app.services.batch_worker import start_batch_worker
 from app.services.cache_keeper import start_cache_keeper
@@ -45,6 +45,8 @@ def _run_migrations() -> None:
 
         if "keepalive_enabled" not in existing:
             conn.execute(text("ALTER TABLE conversations ADD COLUMN keepalive_enabled BOOLEAN DEFAULT 0"))
+        if "persona_id" not in existing:
+            conn.execute(text("ALTER TABLE conversations ADD COLUMN persona_id VARCHAR(32)"))
         # Audit-trail columns: whose record it was / who modified / who deleted.
         if "origin_device" not in existing:
             conn.execute(text("ALTER TABLE conversations ADD COLUMN origin_device VARCHAR(64)"))
@@ -175,6 +177,7 @@ app.include_router(stats.router)
 app.include_router(sync.router)
 app.include_router(graph_router.router)
 app.include_router(mathmod.router)
+app.include_router(personas.router)
 
 start_batch_worker()
 start_cache_keeper()

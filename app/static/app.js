@@ -40,6 +40,8 @@ const state = {
   branchSel: JSON.parse(localStorage.getItem("bc_branches") || "{}"),
   // The open dialog's flat message list — the source for branch grouping.
   currentMessages: [],
+  // 🎭 RikkaHub-style personas (saved system prompts + temperature defaults).
+  personas: [],
 };
 
 const els = {
@@ -94,6 +96,13 @@ const els = {
   toast: $("#toast"),
   cacheBtn: $("#cache-btn"),
   reasoningSelect: $("#reasoning-select"),
+  personaSelect: $("#persona-select"),
+  personaManageSelect: $("#persona-manage-select"),
+  personaName: $("#persona-name"),
+  personaPrompt: $("#persona-prompt"),
+  personaTemp: $("#persona-temp"),
+  personaSave: $("#persona-save"),
+  personaDelete: $("#persona-delete"),
   settingsBtn: $("#settings-btn"),
   settingsModal: $("#settings-modal"),
   settingsClose: $("#settings-close"),
@@ -346,6 +355,7 @@ function showApp() {
   updateHeaderControls(); // per-dialog controls start hidden (no dialog open)
   loadModels();
   loadConversations();
+  refreshPersonas();
   checkHealth();
 }
 
@@ -782,6 +792,7 @@ async function deleteConversation(conv) {
 function updateHeaderControls() {
   const inDialog = state.currentConversationId !== null;
   els.reasoningSelect.classList.toggle("hidden", !inDialog);
+  els.personaSelect.classList.toggle("hidden", !inDialog);
   els.cacheBtn.classList.toggle("hidden", !inDialog);
 }
 
@@ -794,6 +805,7 @@ async function openConversation(id) {
   els.cacheBtn.title = conv.keepalive
     ? "🔥 Cache keep-alive is ON for this dialog (pings every 45 min). Click to stop."
     : "🔥 Cache keep-alive is OFF. Click to warm this dialog's prompt cache every 45 min.";
+  els.personaSelect.value = conv.persona_id || "";
   renderMessages(conv.messages);
   renderConversationList();
 }
@@ -816,6 +828,7 @@ els.newChatBtn.addEventListener("click", async () => {
   state.currentMessages = []; // new dialog: start with an empty flat list
   updateHeaderControls(); // new dialog: reasoning + cache controls appear
   els.cacheBtn.classList.remove("active"); // new dialog: warming starts OFF
+  els.personaSelect.value = ""; // fresh dialog: no persona attached yet
   els.chatInput.focus();
 });
 
@@ -2710,3 +2723,103 @@ els.usageModal.addEventListener("click", (e) => {
 });
 els.usageRange.addEventListener("change", loadUsage);
 els.usageRefresh.addEventListener("click", loadUsage);
+
+// ------------------------------------------------------------- 🎭 Personas
+// RikkaHub-style assistants: named system prompts (+ optional temperature)
+// that ride along with any conversation. Attach/detach per dialog with the
+// header select; manage the library in ⚙ Settings. The server resolves the
+// persona on send/retry, so nothing persona-specific rides in the payload.
+
+function personaEscape(s) {
+  const d = document.createElement("div");
+  d.textContent = String(s);
+  return d.innerHTML;
+}
+
+async function refreshPersonas() {
+  try {
+    state.personas = await api("/api/personas");
+  } catch {
+    state.personas = [];
+  }
+  renderPersonaSelect();
+  renderPersonaManager();
+}
+
+function renderPersonaSelect() {
+  const current = els.personaSelect.value;
+  els.personaSelect.innerHTML =
+    '<option value="">🎭 No persona</option>' +
+    state.personas.map((p) => `<option value="${p.id}">${personaEscape(p.name)}</option>`).join("");
+  els.personaSelect.value = state.personas.some((p) => p.id === current) ? current : "";
+}
+
+function renderPersonaManager() {
+  const sel = els.personaManageSelect;
+  const current = sel.value;
+  sel.innerHTML =
+    '<option value="">— new persona —</option>' +
+    state.personas.map((p) => `<option value="${p.id}">${personaEscape(p.name)}</option>`).join("");
+  sel.value = state.personas.some((p) => p.id === current) ? current : "";
+  loadPersonaEditor();
+}
+
+function loadPersonaEditor() {
+  const p = state.personas.find((x) => x.id === els.personaManageSelect.value);
+  els.personaName.value = p ? p.name : "";
+  els.personaPrompt.value = p ? p.system_prompt : "";
+  els.personaTemp.value =
+    p && p.temperature !== null && p.temperature !== undefined ? p.temperature : "";
+}
+
+els.personaManageSelect.addEventListener("change", loadPersonaEditor);
+
+els.personaSelect.addEventListener("change", async () => {
+  if (!state.currentConversationId) return;
+  try {
+    await api(`/api/conversations/${state.currentConversationId}/persona`, {
+      method: "PUT",
+      body: JSON.stringify({ persona_id: els.personaSelect.value || null }),
+    });
+  } catch (err) {
+    console.warn("[personas] attach failed:", err.message);
+  }
+});
+
+els.personaSave.addEventListener("click", async () => {
+  const name = els.personaName.value.trim();
+  if (!name) {
+    els.personaName.focus();
+    return;
+  }
+  const body = {
+    name,
+    system_prompt: els.personaPrompt.value,
+    ...(els.personaTemp.value !== ""
+      ? { temperature: parseFloat(els.personaTemp.value) }
+      : {}),
+  };
+  try {
+    const id = els.personaManageSelect.value;
+    if (id) {
+      await api(`/api/personas/${id}`, { method: "PATCH", body: JSON.stringify(body) });
+    } else {
+      await api("/api/personas", { method: "POST", body: JSON.stringify(body) });
+    }
+    await refreshPersonas();
+  } catch (err) {
+    console.warn("[personas] save failed:", err.message);
+  }
+});
+
+els.personaDelete.addEventListener("click", async () => {
+  const id = els.personaManageSelect.value;
+  if (!id) return;
+  try {
+    await api(`/api/personas/${id}`, { method: "DELETE" });
+    if (state.currentConversationId) els.personaSelect.value = "";
+    await refreshPersonas();
+  } catch (err) {
+    console.warn("[personas] delete failed:", err.message);
+  }
+});

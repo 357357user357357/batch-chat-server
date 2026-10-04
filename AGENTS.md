@@ -18,6 +18,13 @@ Live deployment check: `SMOKE_PASSWORD=<prod pw> python3 scripts/deploy_smoke.py
 - Old server <OLD_SERVER_IP>: since its cert expired Sep 16 (lego ARI account mismatch) and DNS has an 86400s TTL, it now runs an iptables DNAT relay (443+8000 → <MAIN_IP>, persisted via netfilter-persistent) so stale-DNS clients get the new valid cert. Removal steps: `/root/REMOVE-PROXY-NOTE.txt` on the old server (remove after 2026-09-18).
 - App-pinning CA for the Android app lives in `certs/` (ca.crt embedded in the app; copy it when migrating servers).
 
+## Personas (RikkaHub-style assistants)
+- `personas` table: id (hex16), account_id, name, system_prompt, model?, temperature?. CRUD at `/api/personas` (auth-scoped, account-isolated).
+- Attach/clear per conversation: `PUT /api/conversations/{id}/persona` `{"persona_id": str|null}`; surfaced as `persona_id` on ConversationDetail.
+- Ride-along: `/api/chat/send` resolves the persona (a request-level `persona_id` wins AND sticks to the conversation, like the global chat-mode kind flip; otherwise `conversation.persona_id`). The persona's `system_prompt` is used when the request carries no explicit `system`; its `temperature` applies when the request carries none. `/api/chat/retry` resolves the conversation persona the same way.
+- Deleting a persona nulls conversation pointers — dialogs keep working, the persona just stops riding along.
+- Web-only for now: the phone sync contract is untouched (personas do not sync; the phone's field-mapped sync drops `persona_id`).
+
 ## Conversation kinds (web ⚡ Batch ↔ phone Batch tab)
 - `/api/chat/send` takes optional `kind` (`chat`|`batch`, default `chat`). The web UI sends `kind: "batch"` when in ⚡ Batch chat mode — the phone app files `kind='batch'` conversations into its Batch tab and `kind='chat'` into its Chat drawer (see `sync.ts` pull merge).
 - The web mode toggle (Live / ⚡Flex / ⚡Batch) is GLOBAL (localStorage `bc_chat_mode`), not per-conversation — so kind is RE-FILED on every send into an existing conversation: a ⚡ Batch message flips a kind=chat conversation to batch (and a live/flex message flips it back). The `updated_at` bump on message store propagates the flip via incremental pull. Regression: `test_send_kind_refiles_existing_conversation`.

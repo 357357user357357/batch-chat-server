@@ -88,6 +88,9 @@
             <option value="xhigh">🧠 XHigh</option>
             <option value="max">🧠 Max</option>
           </select>
+          <select id="persona-select" class="reasoning-select hidden" title="🎭 Persona — a saved system prompt (+ optional temperature) that rides along with this conversation">
+            <option value="">🎭 No persona</option>
+          </select>
           <div class="model-picker" id="model-picker">
           <button id="model-picker-btn" class="btn btn-ghost btn-small" title="Choose models">Models</button>
           <div id="model-dropdown" class="model-dropdown hidden">
@@ -237,6 +240,35 @@
         <a href="#" id="usage-open-link">📈 Prompt token caching usage</a> — see
         how much of your prompt traffic hits OpenRouter's cache.
       </p>
+
+      <div id="persona-settings-block">
+        <p class="modal-hint" style="margin-top:8px">🎭 Personas — saved assistants whose system prompt (+ optional temperature) rides along with any conversation. Attach one per dialog with the header select.</p>
+        <label class="modal-field">
+          Edit persona
+          <select id="persona-manage-select">
+            <option value="">— new persona —</option>
+          </select>
+        </label>
+        <label class="modal-field">
+          Name
+          <input id="persona-name" type="text" maxlength="64" placeholder="Math tutor" autocomplete="off" spellcheck="false" />
+        </label>
+        <label class="modal-field">
+          System prompt
+          <textarea id="persona-prompt" rows="4" maxlength="16000" placeholder="You are a patient math tutor…"></textarea>
+        </label>
+        <label class="modal-field">
+          Temperature (optional, 0–2)
+          <input id="persona-temp" type="number" min="0" max="2" step="0.1" placeholder="default" />
+        </label>
+        <div class="key-status-row">
+          <span></span>
+          <span class="key-status-actions">
+            <button id="persona-save" class="btn btn-ghost btn-small">💾 Save persona</button>
+            <button id="persona-delete" class="btn btn-ghost btn-small" title="Delete the selected persona (dialogs keep working)">🗑 Delete</button>
+          </span>
+        </div>
+      </div>
 
       <div id="cache-settings-block">
         <p class="modal-hint" style="margin-top:8px">Prompt cache</p>

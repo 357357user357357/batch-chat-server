@@ -7,10 +7,11 @@ from sqlalchemy.orm import Session, selectinload
 from app.config import settings
 from app.database import get_db
 from app.device import device_label
-from app.models import AppSetting, Conversation, Message, MessageTombstone, next_sort_index, utcnow
+from app.models import AppSetting, Conversation, Message, MessageTombstone, next_sort_index, Persona, utcnow
 from app.schemas import (
     ConversationCreate,
     ConversationDetail,
+    ConversationPersona,
     ConversationRename,
     ConversationSummary,
     KeepaliveToggle,
@@ -115,6 +116,34 @@ def rename_conversation(
 ) -> ConversationDetail:
     conv = _fetch_conversation(db, conversation_id, account_id)
     conv.title = payload.title
+    conv.updated_at = utcnow()
+    db.commit()
+    db.refresh(conv)
+    return ConversationDetail.model_validate(conv)
+
+
+@router.put("/{conversation_id}/persona", response_model=ConversationDetail)
+def set_conversation_persona(
+    conversation_id: int,
+    payload: ConversationPersona,
+    db: Session = Depends(get_db),
+    account_id: str = Depends(get_account_id),
+) -> ConversationDetail:
+    """Attach a persona to the conversation (null clears it). RikkaHub-style:
+    the persona's system prompt and default temperature ride along with every
+    send/retry until detached."""
+    conv = _fetch_conversation(db, conversation_id, account_id)
+    if payload.persona_id is None:
+        conv.persona_id = None
+    else:
+        persona = db.scalar(
+            select(Persona).where(
+                Persona.id == payload.persona_id, Persona.account_id == account_id
+            )
+        )
+        if persona is None:
+            raise HTTPException(status_code=404, detail="Persona not found")
+        conv.persona_id = persona.id
     conv.updated_at = utcnow()
     db.commit()
     db.refresh(conv)
