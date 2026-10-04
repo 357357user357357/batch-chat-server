@@ -148,6 +148,16 @@ def is_flex_unsupported_error(status_code: int, message: str) -> bool:
     return "service_tier" in lowered or "flex" in lowered
 
 
+def is_flex_rejected(status_code: int, message: str) -> bool:
+    """Broader retry trigger for a :flex request: ANY 400/422 counts. The
+    service tier is the only thing the request changed, so even a generic
+    validation error (one that never names the tier) earns the one-shot
+    standard-tier retry — either it fixes the request or the same error
+    re-surfaces. Higher status codes (404, 429, 5xx) are never a tier
+    problem."""
+    return status_code in (400, 422)
+
+
 class OpenRouterError(ProviderError):
     pass
 
@@ -369,8 +379,11 @@ def chat_completion_full(
     if status == 0:
         raise OpenRouterError(error_text)
     if status >= 400:
-        # Flex tier not available for this model → standard tier
-        if tier == "flex" and is_flex_unsupported_error(status, error_text):
+        # Flex tier not available for this model → standard tier. The tier is
+        # the only thing this request changed, so ANY 400/422 on a :flex
+        # request earns the one standard-tier retry — a generic validation
+        # error that never names the tier must not surface raw to the user.
+        if tier == "flex" and is_flex_rejected(status, error_text):
             payload.pop("service_tier", None)
             status, error_text, data = _stream_chat_once(payload)
         # Reasoning param rejected (e.g. "Reasoning is mandatory for this

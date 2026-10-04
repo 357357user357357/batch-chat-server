@@ -151,8 +151,8 @@ def graph_node(
     g = build_account_graph(db, account_id)
     if g.node(node_id) is None:
         raise HTTPException(status_code=404, detail="node not found in your graph")
-    outgoing = g.v(id=node_id).out().to_list()
-    incoming = g.v(id=node_id).inn().to_list()
+    outgoing = g.v(id=node_id).out().limit(150).to_list()
+    incoming = g.v(id=node_id).inn().limit(150).to_list()
     sub = g.to_json(set([node_id, *outgoing, *incoming]))
     sub["focus"] = node_id
     sub["out"] = outgoing

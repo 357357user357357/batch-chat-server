@@ -43,7 +43,7 @@ __all__ = [
 # ------------------------------------------------------------------ integers
 
 
-@lru_cache(maxsize=None)
+@lru_cache(maxsize=64)
 def bernoulli(m: int) -> Fraction:
     """Bernoulli number B_m (even convention: B_1 = -1/2)."""
     if m < 0:

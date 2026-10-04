@@ -252,6 +252,12 @@ async function apiStream(path, options = {}) {
     }
   }
   if (!result && streamError) throw streamError;
+  if (!result) {
+    // SSE ended cleanly but carried no data event at all (proxy cut, half-
+    // closed connection) — fail loudly instead of handing null to callers
+    // that immediately read fields off the payload.
+    throw new Error("stream closed before answering");
+  }
   return result;
 }
 
@@ -2782,7 +2788,7 @@ els.personaSelect.addEventListener("change", async () => {
       body: JSON.stringify({ persona_id: els.personaSelect.value || null }),
     });
   } catch (err) {
-    console.warn("[personas] attach failed:", err.message);
+    showToast(`Persona attach failed: ${err.message}`, { error: true });
   }
 });
 
@@ -2795,9 +2801,10 @@ els.personaSave.addEventListener("click", async () => {
   const body = {
     name,
     system_prompt: els.personaPrompt.value,
-    ...(els.personaTemp.value !== ""
-      ? { temperature: parseFloat(els.personaTemp.value) }
-      : {}),
+    // An emptied temperature field must CLEAR the saved value (the server
+    // PATCHes with exclude_unset, so only an explicit null resets it).
+    temperature:
+      els.personaTemp.value !== "" ? parseFloat(els.personaTemp.value) : null,
   };
   try {
     const id = els.personaManageSelect.value;
@@ -2807,8 +2814,9 @@ els.personaSave.addEventListener("click", async () => {
       await api("/api/personas", { method: "POST", body: JSON.stringify(body) });
     }
     await refreshPersonas();
+    showToast("Persona saved");
   } catch (err) {
-    console.warn("[personas] save failed:", err.message);
+    showToast(`Persona save failed: ${err.message}`, { error: true });
   }
 });
 
@@ -2819,7 +2827,8 @@ els.personaDelete.addEventListener("click", async () => {
     await api(`/api/personas/${id}`, { method: "DELETE" });
     if (state.currentConversationId) els.personaSelect.value = "";
     await refreshPersonas();
+    showToast("Persona deleted");
   } catch (err) {
-    console.warn("[personas] delete failed:", err.message);
+    showToast(`Persona delete failed: ${err.message}`, { error: true });
   }
 });

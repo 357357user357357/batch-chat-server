@@ -11,11 +11,14 @@ import os
 os.environ.setdefault("APP_PASSWORD", "test")
 os.environ.setdefault("DATABASE_URL", "sqlite:////tmp/bc_test_batch.db")
 
+import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
 from app.main import app  # noqa: E402
 from app.services.openrouter import (  # noqa: E402
     chat_completion,
+    chat_completion_full,
+    is_flex_rejected,
     is_flex_unsupported_error,
     split_model_variant,
 )
@@ -191,6 +194,148 @@ def test_flex_unsupported_error_detection():
     assert is_flex_unsupported_error(422, "Extra inputs are not permitted: service_tier")
     assert not is_flex_unsupported_error(422, "Invalid message content")
     assert not is_flex_unsupported_error(500, "flex")
+
+
+def test_flex_rejected_covers_generic_400_422():
+    """Broadened retry trigger for :flex requests: ANY 400/422 counts — the
+    service tier is the only thing the request changed, so a generic
+    validation error that never names the tier must still earn the one
+    standard-tier retry. Higher status codes are never a tier problem."""
+    assert is_flex_rejected(400, "Input validation failed: messages")
+    assert is_flex_rejected(422, "Invalid message content")
+    assert not is_flex_rejected(404, "flex")
+    assert not is_flex_rejected(429, "rate limited")
+    assert not is_flex_rejected(500, "flex")
+    # The message-based detector keeps its old (narrower) semantics.
+    assert is_flex_unsupported_error(400, "service_tier flex is not available for this model")
+    assert not is_flex_unsupported_error(400, "Input validation failed: messages")
+
+
+def test_flex_generic_400_falls_back_to_standard(monkeypatch):
+    """A :flex request answered with a generic 400 (no "flex"/"service_tier"
+    in the message) must still fall back to ONE standard-tier request and
+    succeed, instead of surfacing the raw provider error to the user."""
+    calls = []
+
+    class FakeResponse:
+        def __init__(self, status_code, sse=None, error_message=None):
+            self.status_code = status_code
+            self._sse = sse or []
+            self._error_message = error_message
+
+        def read(self):
+            return b""
+
+        def json(self):
+            return {"error": {"message": self._error_message or "bad request"}}
+
+        def iter_lines(self):
+            return iter(self._sse)
+
+    class FakeStream:
+        def __init__(self, response):
+            self._response = response
+
+        def __enter__(self):
+            return self._response
+
+        def __exit__(self, *a):
+            return False
+
+    class FakeClient:
+        def __init__(self, *a, **k):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def stream(self, method, url, headers=None, json=None):
+            calls.append(dict(json))  # snapshot: the code mutates the payload
+            if "service_tier" in json:
+                return FakeStream(
+                    FakeResponse(400, error_message="Invalid request payload")
+                )
+            return FakeStream(FakeResponse(200, sse=[
+                'data: {"id": "gen-1", "provider": "Mock", '
+                '"choices": [{"delta": {"content": "standard tier answer"}}]}',
+                'data: {"choices": [{"delta": {}, "finish_reason": "stop"}],'
+                ' "usage": {"prompt_tokens": 5, "completion_tokens": 3,'
+                ' "total_tokens": 8}}',
+                "data: [DONE]",
+            ]))
+
+    import httpx
+
+    from app.config import settings as app_settings
+
+    monkeypatch.setattr(httpx, "Client", FakeClient)
+    monkeypatch.setattr(app_settings, "openrouter_api_key", "sk-test")
+
+    info = chat_completion_full(
+        "test/model:flex", [{"role": "user", "content": "hi"}]
+    )
+    assert info["content"] == "standard tier answer"
+    assert len(calls) == 2
+    assert calls[0]["service_tier"] == "flex"
+    assert "service_tier" not in calls[1]
+
+
+def test_flex_non_tier_errors_still_surface(monkeypatch):
+    """404/429/5xx on a :flex request are not tier problems — the raw error
+    surfaces after the usual chain (no standard-tier retry is attempted)."""
+    calls = []
+
+    class FakeResponse:
+        status_code = 404
+
+        def read(self):
+            return b""
+
+        def json(self):
+            return {"error": {"message": "No endpoints found for test/model:flex"}}
+
+        def iter_lines(self):
+            return iter([])
+
+    class FakeStream:
+        def __init__(self, response):
+            self._response = response
+
+        def __enter__(self):
+            return self._response
+
+        def __exit__(self, *a):
+            return False
+
+    class FakeClient:
+        def __init__(self, *a, **k):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def stream(self, method, url, headers=None, json=None):
+            calls.append(dict(json))
+            return FakeStream(FakeResponse())
+
+    import httpx
+
+    from app.config import settings as app_settings
+    from app.services.openrouter import OpenRouterError
+
+    monkeypatch.setattr(httpx, "Client", FakeClient)
+    monkeypatch.setattr(app_settings, "openrouter_api_key", "sk-test")
+
+    with pytest.raises(OpenRouterError) as exc_info:
+        chat_completion_full("test/model:flex", [{"role": "user", "content": "hi"}])
+    assert "No endpoints found" in str(exc_info.value)
+    assert len(calls) == 1  # no retry for a non-tier status code
 
 
 def test_custom_flex_runs_service_tier_and_falls_back(monkeypatch):
@@ -1027,7 +1172,7 @@ def test_models_endpoint_includes_pricing(monkeypatch):
         ],
         raising=False,
     )
-    data = client.get("/api/chat/models").json()
+    data = client.get("/api/chat/models", headers=auth_headers()).json()
     # Live tier = plain catalog price.
     live = data["pricing"]["openai/gpt-6-astra"]["live"]
     assert live["prompt"] == 2e-06 and live["completion"] == 8e-06

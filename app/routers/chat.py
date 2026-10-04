@@ -181,11 +181,13 @@ def call_model(
 
 
 @router.get("/models")
-def available_models() -> dict:
+def available_models(account_id: str = Depends(get_account_id)) -> dict:
     # Pricing (USD per token) for the picker models, PER CHAT MODE, from the
     # public OpenRouter catalog. Live = catalog price. Flex has no separate
     # catalog entry — OpenAI's documented flex discount is 50%, the same
     # factor OpenRouter's ":batch" ids carry (verified in the catalog).
+    # Signed-in accounts only — like /models/all below, the roster of the
+    # operator's picker stays behind auth.
     catalog = openrouter.fetch_model_pricing()
     pricing: dict[str, dict[str, dict[str, float]]] = {}
     for model in default_models():

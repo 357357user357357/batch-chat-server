@@ -129,3 +129,10 @@ def test_graph_node_egocentric():
 def test_graph_node_404():
     r = client.get("/api/graph/node/topic:does-not-exist", headers=auth_headers())
     assert r.status_code == 404
+
+
+def test_bernoulli_cache_is_bounded():
+    """The bernoulli() lru_cache is capped (64 entries) so rare large-m
+    requests cannot grow the process without bound; values stay correct."""
+    assert mm.bernoulli.cache_parameters()["maxsize"] == 64
+    assert mm.bernoulli(20) == mm.Fraction(-174611, 330)

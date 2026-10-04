@@ -102,6 +102,12 @@ def test_models_all_requires_auth():
     assert client.get("/api/chat/models/all").status_code == 401
 
 
+def test_models_pricing_endpoint_requires_auth():
+    """The picker-pricing roster is account UI data like /models/all — it
+    must not leak the operator's model list to anonymous visitors."""
+    assert client.get("/api/chat/models").status_code == 401
+
+
 def test_models_all_returns_full_catalog(monkeypatch):
     import app.services.openrouter as openrouter
 
