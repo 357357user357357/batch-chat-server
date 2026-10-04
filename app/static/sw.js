@@ -4,8 +4,8 @@
  * with zero staleness. The cache below exists ONLY as an offline fallback for
  * navigations (open the app with no connection -> cached shell). Bump the
  * cache name when the fallback shell file list changes. */
-const SHELL_CACHE = "bc-shell-v1";
-const SHELL_FILES = ["/", "/style.css?v=3", "/app.js?v=3", "/icon-192.png"];
+const SHELL_CACHE = "bc-shell-v2";
+const SHELL_FILES = ["/", "/style.css?v=3", "/app.js?v=7", "/icon-192.png"];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(

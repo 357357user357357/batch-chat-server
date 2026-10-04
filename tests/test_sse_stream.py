@@ -180,3 +180,85 @@ def test_send_kind_refiles_existing_conversation(monkeypatch):
         match = [c for c in convs if c["id"] == conv_id]
         assert match, f"conversation {conv_id} not listed"
         assert match[0]["kind"] == expected
+
+
+def test_web_batch_survives_stale_phone_push_and_stays_in_phone_batch_tab(monkeypatch):
+    """A multi-model web batch must remain a batch after a phone pushes an old
+    local chat copy, and every parallel answer must be present in the pull."""
+    from app.routers import chat as chat_router
+
+    def fake_full(model, messages, temperature=None, max_tokens=None,
+                  reasoning_effort=None):
+        return {"content": f"answer from {model}"}
+
+    monkeypatch.setattr(chat_router, "chat_completion_full", fake_full)
+    login = client.post("/api/auth/login", json={"password": "test"}).json()
+    web_headers = {"Authorization": f"Bearer {login['token']}"}
+    phone_headers = {**web_headers, "X-Device-Name": "regression-phone"}
+
+    # The phone has already synced a normal-chat copy, establishing an
+    # incremental cursor and an older local snapshot.
+    first = client.post(
+        "/api/chat/send",
+        headers=web_headers,
+        json={"user_message": "existing phone chat", "models": ["model/a"]},
+    )
+    assert first.status_code == 200, first.text
+    first_payload = json.loads(
+        [line[len("data: "):]
+         for line in first.text.splitlines() if line.startswith("data: ")][-1]
+    )
+    conv_id = first_payload["conversation_id"]
+    external_id = f"srv-{conv_id}"
+    baseline = client.get("/api/sync/pull", headers=phone_headers)
+    assert baseline.status_code == 200, baseline.text
+    old_copy = next(
+        c for c in baseline.json()["conversations"] if c["external_id"] == external_id
+    )
+    assert old_copy["kind"] == "chat"
+
+    # The web re-files that existing dialog as batch and stores two parallel
+    # model answers after the phone's last pull.
+    resp = client.post(
+        "/api/chat/send",
+        headers=web_headers,
+        json={
+            "user_message": "web batch sync regression",
+            "models": ["model/a", "model/b"],
+            "conversation_id": conv_id,
+            "kind": "batch",
+        },
+    )
+    assert resp.status_code == 200, resp.text
+
+    pushed = client.post(
+        "/api/sync/push",
+        headers=phone_headers,
+        json={
+            "dialogs": [{
+                "id": external_id,
+                "title": old_copy["title"],
+                "model": old_copy["model"],
+                "messages": [
+                    {"role": message["role"], "content": message["content"],
+                     "model": message["model"]}
+                    for message in old_copy["messages"]
+                ],
+            }],
+            "batches": [],
+            "deleted_external_ids": [],
+        },
+    )
+    assert pushed.status_code == 200, pushed.text
+
+    since = baseline.json()["server_time"]
+    pulled = client.get(
+        "/api/sync/pull", headers=phone_headers, params={"since": since}
+    )
+    assert pulled.status_code == 200, pulled.text
+    target = next(c for c in pulled.json()["conversations"] if c["external_id"] == external_id)
+    assert target["kind"] == "batch"
+    assert {m["content"] for m in target["messages"] if m["role"] == "assistant"} == {
+        "answer from model/a",
+        "answer from model/b",
+    }

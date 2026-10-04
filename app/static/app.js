@@ -1485,6 +1485,9 @@ async function doRetry(msg, models, btn, node) {
  * stashed fragments are restored (math via KaTeX) after sanitizing.
  */
 function renderRichText(container, raw) {
+  // Normalize old messages too, not only fresh clipboard input. This repairs
+  // malformed math copied before the paste handler was deployed.
+  raw = sanitizePastedText(raw);
   if (typeof marked === "undefined" || typeof DOMPurify === "undefined") {
     container.textContent = raw; // libraries failed to load (offline CDN) — plain text fallback
     return;
@@ -1761,7 +1764,7 @@ els.reasoningSelect.addEventListener("change", () => {
 // 🔄 Auto-sync (web = the master server, so syncing means re-reading the
 // master DB): refresh the dialog list and the open conversation. Runs
 // automatically after every sent/answered message — no button needed.
-async function syncNow() {
+async function syncNow({ reportErrors = false } = {}) {
   try {
     await loadConversations();
     if (state.currentConversationId !== null) {
@@ -1769,6 +1772,7 @@ async function syncNow() {
     }
   } catch (err) {
     console.warn("Auto-sync failed:", err.message);
+    if (reportErrors) throw err;
   }
 }
 
@@ -1792,7 +1796,7 @@ els.syncBtn.addEventListener("click", async () => {
   els.syncBtn.disabled = true;
   showToast("⏳ Syncing…", { duration: 15000 }); // stays until done/fails
   try {
-    await syncNow();
+    await syncNow({ reportErrors: true });
     const n = state.conversations.length;
     showToast(`✅ Synced · ${n} dialog${n === 1 ? "" : "s"}`);
   } catch (err) {
@@ -2001,39 +2005,71 @@ els.chatInput.addEventListener("keydown", (e) => {
 // Paste cleanup — text copied out of pages that RENDER math (KaTeX/MathJax,
 // messengers, ChatGPT) arrives as one glyph per line plus invisible junk
 // (zero-width spaces, PUA glyphs). Strip the invisible characters and
-// re-join runs of 1-2 char lines so such pastes stay readable.
+// re-join math-artifact paragraphs so such pastes stay readable.
 // ---------------------------------------------------------------
 const INVISIBLE_CHARS = /[\u200b-\u200f\u202a-\u202e\u2060-\u2064\u206a-\u206f\ufeff\ue000-\uf8ff]/g;
+const MATH_SYMBOLS = /[\u2200-\u22ff\u27c0-\u27ff\u2980-\u29ff\u03c0\u03a0]/u;
+const MATH_PUNCTUATION = /^[()[\]{}.,:;!?=<>~^|/\\]+$/u;
+
+function pastedLineIsFragment(line) {
+  const value = line.trim();
+  if (!value) return true;
+  return [...value].length <= 2 || MATH_SYMBOLS.test(value) || MATH_PUNCTUATION.test(value);
+}
+
+function joinPastedMathBlock(lines) {
+  let joined = "";
+  for (const line of lines) {
+    const piece = line.trim();
+    if (!piece) continue;
+    if (!joined) {
+      joined = piece;
+    } else if (/^[,.;:!?%)\]}]/u.test(piece) || /[(\[{]$/u.test(joined)) {
+      joined += piece;
+    } else {
+      joined += ` ${piece}`;
+    }
+  }
+  return joined;
+}
 
 function sanitizePastedText(text) {
-  const t = text.replace(INVISIBLE_CHARS, "");
-  const lines = t.split("\n");
+  // Keep the original line around so a line containing only invisible/PUA
+  // characters is not mistaken for a real paragraph break.
+  const rawLines = text.replace(/\r\n?/g, "\n").split("\n");
+  const lines = rawLines.map((raw) => ({ raw, cleaned: raw.replace(INVISIBLE_CHARS, "") }));
   const out = [];
-  let run = [];
-  const flushRun = () => {
-    if (run.length >= 3) {
-      // KaTeX-copy artifact: join the glyph-per-line run back into one line.
-      let joined = "";
-      for (const raw of run) {
-        const piece = raw.trim();
-        if (!piece) continue;
-        if (joined && /[\p{L}\p{N}_]$/u.test(joined) && /^[\p{L}\p{N}_]/u.test(piece)) {
-          joined += " ";
-        }
-        joined += piece;
-      }
-      if (joined) out.push(joined);
-    } else {
-      out.push(...run);
+
+  for (let i = 0; i < lines.length;) {
+    // Real blank lines still delimit Markdown paragraphs. Invisible-only lines
+    // stay inside the surrounding block and disappear during joining.
+    if (!lines[i].raw.trim()) {
+      out.push("");
+      i++;
+      continue;
     }
-    run = [];
-  };
-  for (const line of lines) {
-    const trimmed = line.trim();
-    if (trimmed.length > 0 && trimmed.length <= 2) run.push(line);
-    else { flushRun(); out.push(line); }
+
+    let end = i;
+    while (end < lines.length && lines[end].raw.trim()) end++;
+    const paragraph = lines.slice(i, end);
+    const firstFragment = paragraph.findIndex(({ cleaned }) => pastedLineIsFragment(cleaned));
+    const suffix = firstFragment < 0 ? [] : paragraph.slice(firstFragment);
+    const fragmentCount = suffix.filter(({ cleaned }) => pastedLineIsFragment(cleaned)).length;
+    const hasMathSymbol = suffix.some(({ cleaned }) => MATH_SYMBOLS.test(cleaned));
+
+    // Rendered KaTeX/MathJax copies are a paragraph containing several tiny
+    // glyph lines, often interrupted by a longer line such as "=1, then".
+    // Join the complete paragraph after the first fragment; ordinary prose and
+    // Markdown lists do not meet this threshold.
+    if (firstFragment >= 0 && fragmentCount >= 3 && hasMathSymbol) {
+      const before = paragraph.slice(0, firstFragment).map(({ cleaned }) => cleaned);
+      out.push(...before);
+      out.push(joinPastedMathBlock(suffix.map(({ cleaned }) => cleaned)));
+    } else {
+      out.push(...paragraph.map(({ cleaned }) => cleaned));
+    }
+    i = end;
   }
-  flushRun();
   return out.join("\n");
 }
 
