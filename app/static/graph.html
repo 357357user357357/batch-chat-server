@@ -1,0 +1,250 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Graph — flexchat.top</title>
+<style>
+  :root { --bg:#0f1420; --bg2:#171e2e; --bg3:#1f2940; --border:#2a3550; --text:#e6eaf2; --muted:#8b96ad; --accent:#4f8cff; --success:#3ddc84; }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  body { background:var(--bg); color:var(--text); font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; display:flex; height:100vh; overflow:hidden; }
+  a { color:var(--accent); text-decoration:none; }
+  #stage { flex:1; position:relative; min-width:0; }
+  canvas { display:block; width:100%; height:100%; cursor:grab; }
+  canvas.grabbing { cursor:grabbing; }
+  #hud { position:absolute; top:14px; left:14px; background:rgba(23,30,46,.92); border:1px solid var(--border); border-radius:10px; padding:10px 14px; pointer-events:none; }
+  #hud h1 { font-size:15px; margin-bottom:2px; }
+  #hud .muted { color:var(--muted); font-size:12px; }
+  #legend { position:absolute; bottom:14px; left:14px; display:flex; gap:10px; background:rgba(23,30,46,.92); border:1px solid var(--border); border-radius:10px; padding:8px 12px; font-size:12px; pointer-events:none; }
+  #legend span { display:flex; align-items:center; gap:6px; color:var(--muted); }
+  #legend i { width:10px; height:10px; border-radius:50%; display:inline-block; }
+  #side { width:320px; border-left:1px solid var(--border); background:var(--bg2); padding:16px; overflow-y:auto; flex-shrink:0; }
+  #side h2 { font-size:16px; margin-bottom:4px; word-break:break-word; }
+  #side .kind { color:var(--muted); font-size:12px; text-transform:uppercase; letter-spacing:.06em; margin-bottom:10px; }
+  #side h3 { font-size:12px; color:var(--muted); text-transform:uppercase; letter-spacing:.06em; margin:14px 0 6px; }
+  .node-item { background:var(--bg3); border:1px solid var(--border); border-radius:8px; padding:7px 10px; margin-bottom:6px; cursor:pointer; font-size:13px; word-break:break-word; }
+  .node-item:hover { border-color:var(--accent); }
+  .node-item .k { color:var(--muted); font-size:11px; }
+  #msg { color:var(--muted); font-size:13px; }
+  #gate { margin:auto; text-align:center; }
+  .badge { display:inline-block; background:var(--bg3); border:1px solid var(--border); border-radius:8px; padding:3px 8px; font-size:11px; color:var(--muted); margin:2px 4px 2px 0; }
+</style>
+</head>
+<body>
+  <div id="stage">
+    <canvas id="cv"></canvas>
+    <div id="hud">
+      <h1>Knowledge Graph</h1>
+      <div class="muted" id="stats">loading…</div>
+    </div>
+    <div id="legend">
+      <span><i style="background:#4f8cff"></i> conversation</span>
+      <span><i style="background:#3ddc84"></i> model</span>
+      <span><i style="background:#ffb86b"></i> topic</span>
+      <span><i style="background:#8b96ad"></i> hub</span>
+    </div>
+  </div>
+  <div id="side"><div id="msg">Click a node to inspect it.</div><div id="panel"></div></div>
+<script>
+const $ = (id) => document.getElementById(id);
+const token = localStorage.getItem("bc_token");
+if (!token) {
+  document.body.innerHTML = '<div id="gate"><h2>Sign in required</h2><p style="margin:8px 0">The knowledge graph is per-account.</p><a href="/">Sign in on the main page →</a></div>';
+  throw new Error("no token");
+}
+
+const cv = $("cv"), ctx = cv.getContext("2d");
+const KIND_COLOR = { conversation:"#4f8cff", model:"#3ddc84", topic:"#ffb86b", hub:"#8b96ad" };
+let nodes = [], edges = [], sim = null, hover = null, selected = null;
+let dragNode = null, panning = false, moved = 0;
+let cam = { s: 1, ox: 0, oy: 0 };
+
+function resize() {
+  const dpr = window.devicePixelRatio || 1;
+  cv.width = cv.clientWidth * dpr;
+  cv.height = cv.clientHeight * dpr;
+}
+window.addEventListener("resize", resize);
+
+function toWorld(mx, my) { return { x: (mx - cam.ox) / cam.s, y: (my - cam.oy) / cam.s }; }
+
+async function api(path) {
+  const r = await fetch(path, { headers: { Authorization: "Bearer " + token } });
+  if (r.status === 401) { document.body.innerHTML = '<div id="gate"><h2>Session expired</h2><a href="/">Sign in again →</a></div>'; throw new Error("401"); }
+  if (!r.ok) throw new Error(await r.text());
+  return r.json();
+}
+
+function initSim(data) {
+  nodes = data.nodes.map(n => ({ ...n, x: (Math.random() - .5) * 400, y: (Math.random() - .5) * 400, vx: 0, vy: 0 }));
+  const byId = Object.fromEntries(nodes.map(n => [n.id, n]));
+  edges = data.edges.map(e => ({ ...e, a: byId[e.src], b: byId[e.dst] })).filter(e => e.a && e.b);
+  const scoreMap = Object.fromEntries((data.top_nodes || []).map(t => [t.id, t.score]));
+  for (const n of nodes) { n.score = scoreMap[n.id] || 0; }
+  const sMax = Math.max(1e-9, ...nodes.map(n => n.score));
+  for (const n of nodes) n.r = 4 + 14 * Math.sqrt(n.score / sMax);
+}
+
+function tick() {
+  const N = nodes.length;
+  const alpha = sim && sim > 0 ? (sim /= 1.02, Math.min(sim, 1)) : 0.02;
+  for (let i = 0; i < N; i++) {
+    const a = nodes[i];
+    for (let j = i + 1; j < N; j++) {
+      const b = nodes[j];
+      let dx = b.x - a.x, dy = b.y - a.y;
+      let d2 = dx * dx + dy * dy;
+      if (d2 < 1) { d2 = 1; dx = Math.random() - .5; dy = Math.random() - .5; }
+      if (d2 > 90000) continue;
+      const f = 1800 / d2 * alpha;
+      const d = Math.sqrt(d2);
+      const fx = dx / d * f, fy = dy / d * f;
+      a.vx -= fx; a.vy -= fy; b.vx += fx; b.vy += fy;
+    }
+  }
+  for (const e of edges) {
+    const dx = e.b.x - e.a.x, dy = e.b.y - e.a.y;
+    const d = Math.sqrt(dx * dx + dy * dy) || 1;
+    const f = (d - 90) * 0.02 * alpha;
+    const fx = dx / d * f, fy = dy / d * f;
+    e.a.vx += fx; e.a.vy += fy; e.b.vx -= fx; e.b.vy -= fy;
+  }
+  for (const n of nodes) {
+    if (n === dragNode) continue;
+    n.vx += -n.x * 0.005 * alpha; n.vy += -n.y * 0.005 * alpha;
+    n.vx *= .85; n.vy *= .85;
+    n.x += Math.max(-30, Math.min(30, n.vx));
+    n.y += Math.max(-30, Math.min(30, n.vy));
+  }
+}
+
+function draw() {
+  const dpr = window.devicePixelRatio || 1;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, cv.clientWidth, cv.clientHeight);
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.translate(cam.ox, cam.oy); ctx.scale(cam.s, cam.s);
+  ctx.lineWidth = 1 / cam.s;
+  for (const e of edges) {
+    const a = e.a, b = e.b;
+    const highlighted = selected && (a.id === selected || b.id === selected);
+    ctx.strokeStyle = highlighted ? "rgba(111,160,255,.85)" : "rgba(230,234,242,.10)";
+    ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+  }
+  for (const n of nodes) {
+    ctx.fillStyle = KIND_COLOR[n.kind] || "#8b96ad";
+    ctx.beginPath(); ctx.arc(n.x, n.y, n.r, 0, 2 * Math.PI); ctx.fill();
+    if (n === selected || n === hover || n.r > 9) {
+      ctx.fillStyle = "#e6eaf2";
+      ctx.font = `${Math.min(13, 11 / cam.s + 3)}px sans-serif`;
+      ctx.fillText(n.label, n.x + n.r + 3, n.y + 4);
+    }
+  }
+}
+
+function loop() { tick(); draw(); requestAnimationFrame(loop); }
+
+function hitTest(mx, my) {
+  const p = toWorld(mx, my);
+  let best = null, bestD = 1e9;
+  for (const n of nodes) {
+    const d = Math.hypot(n.x - p.x, n.y - p.y);
+    if (d < n.r + 5 && d < bestD) { best = n; bestD = d; }
+  }
+  return best;
+}
+
+function canvasPos(ev) { const r = cv.getBoundingClientRect(); return { x: ev.clientX - r.left, y: ev.clientY - r.top }; }
+
+cv.addEventListener("mousedown", ev => {
+  const p = canvasPos(ev);
+  dragNode = hitTest(p.x, p.y);
+  panning = !dragNode;
+  moved = 0;
+  cv.classList.add("grabbing");
+});
+window.addEventListener("mousemove", ev => {
+  const p = canvasPos(ev);
+  if (dragNode) { dragNode.x = toWorld(p.x, p.y).x; dragNode.y = toWorld(p.x, p.y).y; sim = Math.max(sim || 0, .3); moved++; return; }
+  if (panning) { cam.ox += ev.movementX; cam.oy += ev.movementY; moved++; return; }
+  hover = hitTest(p.x, p.y);
+  cv.style.cursor = hover ? "pointer" : "grab";
+});
+window.addEventListener("mouseup", () => {
+  const wasDrag = dragNode;
+  const clickCandidate = moved < 4;
+  dragNode = null; panning = false;
+  cv.classList.remove("grabbing");
+  if (clickCandidate && hover) select(hover.id);
+  else if (clickCandidate && !wasDrag) { selected = null; $("panel").innerHTML = ""; $("msg").style.display = "block"; }
+});
+cv.addEventListener("wheel", ev => {
+  ev.preventDefault();
+  const p = canvasPos(ev);
+  const before = toWorld(p.x, p.y);
+  cam.s = Math.max(.2, Math.min(4, cam.s * (ev.deltaY < 0 ? 1.12 : .89)));
+  cam.ox = p.x - before.x * cam.s;
+  cam.oy = p.y - before.y * cam.s;
+}, { passive: false });
+
+function centerOn(n) {
+  cam.ox = cv.clientWidth / 2 - n.x * cam.s;
+  cam.oy = cv.clientHeight / 2 - n.y * cam.s;
+}
+
+async function select(nodeId) {
+  selected = nodeId;
+  $("msg").style.display = "none";
+  const n = nodes.find(x => x.id === nodeId);
+  $("panel").innerHTML = `<h2>${escapeHtml(n ? n.label : nodeId)}</h2><div class="kind">${nodeId.split(":")[0]}</div><div id="msg">loading…</div>`;
+  try {
+    const sub = await api("/api/graph/node/" + encodeURIComponent(nodeId));
+    const meta = sub.nodes.find(x => x.id === nodeId) || {};
+    let html = `<h2>${escapeHtml(meta.label || nodeId)}</h2><div class="kind">${(meta.kind || "?")}${meta.props && meta.props.total ? " · " + meta.props.total + " mentions" : ""}</div>`;
+    if (meta.props && meta.props.kind_flag) html += `<span class="badge">${escapeHtml(meta.props.kind_flag)}</span>`;
+    const item = id => {
+      const nn = sub.nodes.find(x => x.id === id);
+      return `<div class="node-item" data-id="${escapeHtml(id)}">${escapeHtml(nn ? nn.label : id)}<div class="k">${escapeHtml(id.split(":")[0])}</div></div>`;
+    };
+    if (sub.out.length) html += `<h3>→ outgoing (${sub.out.length})</h3>` + sub.out.map(item).join("");
+    if (sub.in.length) html += `<h3>← incoming (${sub.in.length})</h3>` + sub.in.map(item).join("");
+    $("panel").innerHTML = html;
+    $("panel").querySelectorAll(".node-item").forEach(el =>
+      el.addEventListener("click", () => {
+        select(el.dataset.id);
+        const target = nodes.find(x => x.id === el.dataset.id);
+        if (target) centerOn(target);
+      }));
+    if (n) centerOn(n);
+  } catch (err) { $("panel").innerHTML = `<div id="msg">${escapeHtml(String(err.message || err))}</div>`; }
+}
+
+function escapeHtml(s) { const d = document.createElement("div"); d.textContent = String(s); return d.innerHTML; }
+
+(async function start() {
+  resize();
+  try {
+    const data = await api("/api/graph/overview");
+    $("stats").textContent = `${data.stats.nodes} nodes · ${data.stats.edges} edges`;
+    if (!data.nodes.length) { $("msg").textContent = "No conversations yet — chat a little and come back."; return; }
+    initSim(data);
+    sim = 1;
+    loop();
+    $("msg").textContent = "Click a node to inspect it. Drag to rearrange, scroll to zoom, drag background to pan.";
+    if (data.top_nodes && data.top_nodes.length) {
+      $("panel").innerHTML = "<h3>Most connected</h3>" + data.top_nodes.map(t => {
+        const n = nodes.find(x => x.id === t.id);
+        return n ? `<div class="node-item" data-id="${t.id}">${escapeHtml(n.label)}<div class="k">${t.id.split(":")[0]}</div></div>` : "";
+      }).join("");
+      $("msg").style.display = "none";
+      $("panel").querySelectorAll(".node-item").forEach(el =>
+        el.addEventListener("click", () => { select(el.dataset.id); const t = nodes.find(x => x.id === el.dataset.id); if (t) centerOn(t); }));
+    }
+  } catch (err) {
+    $("stats").textContent = "failed to load";
+    $("msg").textContent = String(err.message || err);
+  }
+})();
+</script>
+</body>
+</html>
