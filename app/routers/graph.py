@@ -22,7 +22,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models import Conversation, Message
 from app.security import get_account_id
-from app.services.graphdb import Graph
+from app.services.graphdb import Graph, kernel_name
 
 router = APIRouter(prefix="/api/graph", tags=["graph"])
 
@@ -137,6 +137,13 @@ def graph_overview(
     top = sorted(ranks.items(), key=lambda kv: (-kv[1], kv[0]))[:12]
     data["top_nodes"] = [{"id": node_id, "score": round(score, 6)} for node_id, score in top]
     data["communities"] = g.communities()
+    bt = g.betweenness_centrality()
+    data["hubs"] = [
+        {"id": node_id, "score": round(score, 6)}
+        for node_id, score in sorted(bt.items(), key=lambda kv: (-kv[1], kv[0]))[:10]
+        if score > 0
+    ]
+    data["kernel"] = kernel_name()
     data["stats"] = {"nodes": g.node_count(), "edges": g.edge_count()}
     return data
 
@@ -157,4 +164,10 @@ def graph_node(
     sub["focus"] = node_id
     sub["out"] = outgoing
     sub["in"] = incoming
+    sub["betweenness"] = round(g.betweenness_centrality().get(node_id, 0.0), 6)
+    related = g.related(node_id, 8)
+    sub["related"] = [
+        {"id": rid, "label": (g.node(rid) or {}).get("label", rid), "kind": (g.node(rid) or {}).get("kind", "")}
+        for rid in related
+    ]
     return sub

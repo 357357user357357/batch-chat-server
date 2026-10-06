@@ -116,3 +116,91 @@ def test_roundtrip_file_db(tmp_path):
     g2 = Graph.open(path)
     assert g2.node_count() == 2
     assert list(g2.v(id="a").out("knows").values("id")) == ["b"]
+
+
+# ---------------------------------------------------------------- kernel
+
+def _force_python(monkeypatch):
+    import app.services.graphdb as gmod
+    monkeypatch.setattr(gmod, "_KERNEL", None)
+    monkeypatch.setattr(gmod, "_KERNEL_TRIED", True)
+
+
+def _kernel_available() -> bool:
+    import app.services.graphdb as gmod
+    return gmod._kernel() is not None
+
+
+def test_betweenness_known_values_python(monkeypatch):
+    _force_python(monkeypatch)
+    g = Graph.open()
+    for nid in ("0", "1", "2", "3"):
+        g.add_node(nid, "x", nid)
+    for s, d in (("0", "1"), ("1", "2"), ("2", "3")):
+        g.add_edge(s, d, "e")
+    bt = g.betweenness_centrality()
+    assert bt == {"0": 0.0, "1": 2.0, "2": 2.0, "3": 0.0}
+
+
+def test_betweenness_kernel_matches_python(monkeypatch):
+    if not _kernel_available():
+        import pytest
+        pytest.skip("libgraphkern.so not built")
+    g = Graph.open()
+    for nid in ("a", "b", "c", "d", "e", "f"):
+        g.add_node(nid, "x", nid)
+    edges = [("a", "b"), ("b", "c"), ("c", "a"), ("b", "d"), ("d", "e"),
+             ("e", "b"), ("a", "f"), ("f", "c")]
+    for s, d in edges:
+        g.add_edge(s, d, "e")
+    _force_python(monkeypatch)
+    py_bt = g.betweenness_centrality()
+    py_pr = g.pagerank()
+    py_ppr = g.personalized_pagerank(["a"])
+    monkeypatch.undo()
+    import app.services.graphdb as gmod
+    assert gmod.kernel_name() == "rust"
+    for name, got, want in (
+        ("betweenness", g.betweenness_centrality(), py_bt),
+        ("pagerank", g.pagerank(), py_pr),
+        ("ppr", g.personalized_pagerank(["a"]), py_ppr),
+    ):
+        for k in want:
+            assert abs(got[k] - want[k]) < 1e-9, (name, k, got[k], want[k])
+
+
+def test_ppr_mass_and_related(monkeypatch):
+    g = Graph.open()
+    for nid in ("a", "b", "c", "d"):
+        g.add_node(nid, "x", nid)
+    for s, d in (("a", "b"), ("b", "a"), ("b", "c"), ("c", "d"), ("d", "b")):
+        g.add_edge(s, d, "e")
+    scores = g.personalized_pagerank(["a"])
+    assert abs(sum(scores.values()) - 1.0) < 1e-9
+    # b is the confluence: it takes flow from a AND from the d-cycle back-edge,
+    # so PPR legitimately ranks it above the seed itself.
+    assert scores["b"] == max(scores.values())
+    assert scores["b"] > scores["a"] > scores["c"] > scores["d"]
+    rel = g.related("a", k=2)
+    assert rel == ["b", "c"]
+    assert "a" not in g.related("a")
+    assert g.personalized_pagerank(["missing"]) == {}
+    assert g.related("missing") == []
+
+
+def test_pagerank_kernel_matches_python_dangling(monkeypatch):
+    if not _kernel_available():
+        import pytest
+        pytest.skip("libgraphkern.so not built")
+    g = Graph.open()
+    for nid in ("a", "b", "c", "hub"):
+        g.add_node(nid, "x", nid)
+    for s, d in (("a", "b"), ("a", "c"), ("b", "hub"), ("c", "hub")):
+        g.add_edge(s, d, "e")  # hub is dangling
+    _force_python(monkeypatch)
+    py = g.pagerank()
+    monkeypatch.undo()
+    rk = g.pagerank()
+    assert abs(sum(rk.values()) - 1.0) < 1e-9
+    for k in py:
+        assert abs(rk[k] - py[k]) < 1e-9, k

@@ -42,6 +42,7 @@
       <span><i style="background:#3ddc84"></i> model</span>
       <span><i style="background:#ffb86b"></i> topic</span>
       <span><i style="background:#8b96ad"></i> hub</span>
+      <span><i style="background:transparent;border:2px solid rgba(79,140,255,.6);border-radius:50%;width:12px;height:12px"></i> bridge (betweenness)</span>
     </div>
   </div>
   <div id="side"><div id="msg">Click a node to inspect it.</div><div id="panel"></div></div>
@@ -80,7 +81,8 @@ function initSim(data) {
   const byId = Object.fromEntries(nodes.map(n => [n.id, n]));
   edges = data.edges.map(e => ({ ...e, a: byId[e.src], b: byId[e.dst] })).filter(e => e.a && e.b);
   const scoreMap = Object.fromEntries((data.top_nodes || []).map(t => [t.id, t.score]));
-  for (const n of nodes) { n.score = scoreMap[n.id] || 0; }
+  const hubMap = Object.fromEntries((data.hubs || []).map(t => [t.id, t.score]));
+  for (const n of nodes) { n.score = scoreMap[n.id] || 0; n.bt = hubMap[n.id] || 0; }
   const sMax = Math.max(1e-9, ...nodes.map(n => n.score));
   for (const n of nodes) n.r = 4 + 14 * Math.sqrt(n.score / sMax);
 }
@@ -134,6 +136,11 @@ function draw() {
   for (const n of nodes) {
     ctx.fillStyle = KIND_COLOR[n.kind] || "#8b96ad";
     ctx.beginPath(); ctx.arc(n.x, n.y, n.r, 0, 2 * Math.PI); ctx.fill();
+    if (n.bt > 0) {  // bridge node: sits on shortest paths between others
+      ctx.strokeStyle = "rgba(79,140,255,.6)"; ctx.lineWidth = 2 / cam.s;
+      ctx.beginPath(); ctx.arc(n.x, n.y, n.r + 3, 0, 2 * Math.PI); ctx.stroke();
+      ctx.lineWidth = 1 / cam.s;
+    }
     if (n === selected || n === hover || n.r > 9) {
       ctx.fillStyle = "#e6eaf2";
       ctx.font = `${Math.min(13, 11 / cam.s + 3)}px sans-serif`;
@@ -201,11 +208,14 @@ async function select(nodeId) {
     const sub = await api("/api/graph/node/" + encodeURIComponent(nodeId));
     const meta = sub.nodes.find(x => x.id === nodeId) || {};
     let html = `<h2>${escapeHtml(meta.label || nodeId)}</h2><div class="kind">${(meta.kind || "?")}${meta.props && meta.props.total ? " · " + meta.props.total + " mentions" : ""}</div>`;
+    if (sub.betweenness > 0) html += `<span class="badge" title="Brandes betweenness — how often this node sits on shortest paths between others">⇄ bridge ${sub.betweenness}</span>`;
     if (meta.props && meta.props.kind_flag) html += `<span class="badge">${escapeHtml(meta.props.kind_flag)}</span>`;
     const item = id => {
       const nn = sub.nodes.find(x => x.id === id);
       return `<div class="node-item" data-id="${escapeHtml(id)}">${escapeHtml(nn ? nn.label : id)}<div class="k">${escapeHtml(id.split(":")[0])}</div></div>`;
     };
+    if (sub.related && sub.related.length) html += `<h3>✦ related</h3>` + sub.related.map(r =>
+      `<div class="node-item" data-id="${escapeHtml(r.id)}">${escapeHtml(r.label)}<div class="k">${escapeHtml(r.kind)}</div></div>`).join("");
     if (sub.out.length) html += `<h3>→ outgoing (${sub.out.length})</h3>` + sub.out.map(item).join("");
     if (sub.in.length) html += `<h3>← incoming (${sub.in.length})</h3>` + sub.in.map(item).join("");
     $("panel").innerHTML = html;
@@ -225,17 +235,22 @@ function escapeHtml(s) { const d = document.createElement("div"); d.textContent 
   resize();
   try {
     const data = await api("/api/graph/overview");
-    $("stats").textContent = `${data.stats.nodes} nodes · ${data.stats.edges} edges`;
+    $("stats").textContent = `${data.stats.nodes} nodes · ${data.stats.edges} edges · ${data.kernel === "rust" ? "rust kernel" : "python"}`;
     if (!data.nodes.length) { $("msg").textContent = "No conversations yet — chat a little and come back."; return; }
     initSim(data);
     sim = 1;
     loop();
     $("msg").textContent = "Click a node to inspect it. Drag to rearrange, scroll to zoom, drag background to pan.";
     if (data.top_nodes && data.top_nodes.length) {
-      $("panel").innerHTML = "<h3>Most connected</h3>" + data.top_nodes.map(t => {
+      let startHtml = "<h3>Most connected</h3>" + data.top_nodes.map(t => {
         const n = nodes.find(x => x.id === t.id);
         return n ? `<div class="node-item" data-id="${t.id}">${escapeHtml(n.label)}<div class="k">${t.id.split(":")[0]}</div></div>` : "";
       }).join("");
+      if (data.hubs && data.hubs.length) startHtml += "<h3>⇄ Bridges</h3>" + data.hubs.map(t => {
+        const n = nodes.find(x => x.id === t.id);
+        return n ? `<div class="node-item" data-id="${t.id}">${escapeHtml(n.label)}<div class="k">${t.id.split(":")[0]} · bt ${t.score}</div></div>` : "";
+      }).join("");
+      $("panel").innerHTML = startHtml;
       $("msg").style.display = "none";
       $("panel").querySelectorAll(".node-item").forEach(el =>
         el.addEventListener("click", () => { select(el.dataset.id); const t = nodes.find(x => x.id === el.dataset.id); if (t) centerOn(t); }));

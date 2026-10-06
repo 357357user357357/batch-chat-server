@@ -53,3 +53,10 @@ A buggy client release pushed whole dialog lists with the same dialog repeated 3
 - `openrouter.chat_completion_full` now sends `"stream": true` and folds OpenRouter SSE (keep-alive `: OPENROUTER PROCESSING` comments during :flex queueing, delta chunks, final `usage` chunk) into the same dict as before via `parse_sse_chat_stream()` — fallback chain unchanged (flex→standard, reasoning-drop, max-token clamp, empty-content retry). httpx's 180s REQUEST_TIMEOUT read component now acts as an IDLE timeout (keep-alives reset it).
 - `custom:` gateways (custom_provider.py) are still buffered — if a gateway ever queues silently for minutes, mirror the streaming there (`parse_sse_chat_stream` is importable from openrouter.py).
 
+
+## Graph Rust kernel (graphkern/)
+- `graphkern/` = Rust cdylib, C ABI via ctypes (no PyO3 → no Python-ABI coupling; Docker is py3.12, local is 3.13/3.14). CSR in, pre-allocated f64 buffers out, nothing allocated across FFI. rayon-parallel but deterministic (per-node gather over a reverse CSR built identically every call; betweenness sums fixed chunk buffers in order).
+- `graphdb.py` auto-loads it (env `GRAPHKERN_PATH`, then `app/services/libgraphkern.so`, then repo `graphkern/target/release/`); falls back to the equivalent pure-Python path on any failure. `kernel_name()` → "rust"/"python"; `/api/graph/overview` reports it as `kernel`.
+- Semantics parity is tested (`test_graphdb.py` forces the fallback via monkeypatch and compares both paths to 1e-9). PPR note: the seed need NOT rank first — a confluence node taking flow from several paths can outrank it (test documents this).
+- API additions: `/api/graph/overview` → `hubs` (top-10 betweenness, score>0) + `kernel`; `/api/graph/node/{id}` → `betweenness` + `related` (PPR top-8, seed excluded, `{id,label,kind}`). graph.html renders bridge rings (blue outline = bt>0), a "⇄ Bridges" start panel, "✦ related" list, and the kernel badge in the HUD.
+- Dockerfile has a `rust:1-slim` builder stage → `/app/app/services/libgraphkern.so`. Rebuild after changing Rust code; `graphkern/target/` is gitignored.

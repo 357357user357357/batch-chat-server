@@ -136,3 +136,33 @@ def test_bernoulli_cache_is_bounded():
     requests cannot grow the process without bound; values stay correct."""
     assert mm.bernoulli.cache_parameters()["maxsize"] == 64
     assert mm.bernoulli(20) == mm.Fraction(-174611, 330)
+
+
+def test_graph_overview_reports_hubs_and_kernel():
+    headers = auth_headers()
+    client.post("/api/conversations", headers=headers, json={"title": "hub spotting"})
+    r = client.get("/api/graph/overview", headers=headers)
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["kernel"] in ("rust", "python")
+    assert isinstance(body["hubs"], list)
+    for hub in body["hubs"]:
+        assert hub["score"] > 0
+        assert hub["id"] in {n["id"] for n in body["nodes"]}
+
+
+def test_graph_node_detail_has_betweenness_and_related():
+    headers = auth_headers()
+    conv = client.post(
+        "/api/conversations", headers=headers,
+        json={"title": "related recommendations"},
+    ).json()
+    node_id = f"conv:{conv['id']}"
+    r = client.get(f"/api/graph/node/{node_id}", headers=headers)
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert isinstance(body["betweenness"], (int, float))
+    assert isinstance(body["related"], list)
+    for item in body["related"]:
+        assert set(item) == {"id", "label", "kind"}
+        assert item["id"] != node_id

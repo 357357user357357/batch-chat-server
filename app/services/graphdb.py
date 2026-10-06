@@ -1,26 +1,64 @@
 """Tiny property-graph store with a Gremlin-flavored traversal DSL.
 
 MIT. SQLite-backed (in-memory or file), stdlib-only — the "tinkerpop-style
-traversal without Java" piece for flexchat.top. The analytics (PageRank,
-weighted label-propagation communities, directed BFS paths, degree
-centrality) are pure Python and comfortable at site scale (10^3–10^5 nodes);
-if a graph outgrows that, python-graphblas (Apache-2.0) can back the same
-methods later without changing this API.
-
-Node identity is a caller-supplied string id. Edges are directed, kinded,
-and carry an optional weight (the community detector reads it). The
-traversal follows set semantics (each step de-duplicates, order preserved).
+traversal without Java" piece for flexchat.top. The analytics run on a
+Rust CPU kernel (graphkern/, cugraph-style CSR, rayon-parallel, C ABI via
+ctypes) when the shared library is present, with an equivalent pure-Python
+path as fallback — same semantics either way, deterministically ordered:
+PageRank (dangling mass redistributed), personalized PageRank (recommend-
+ations), Brandes betweenness, weighted label-propagation communities,
+directed BFS paths, degree centrality — comfortable at site scale
+(10^3–10^5 nodes) either way.
 
 SPDX-License-Identifier: MIT
 """
 
 from __future__ import annotations
 
+import ctypes
 import json
+import os
 import sqlite3
+from array import array
 from collections import Counter, defaultdict, deque
 
 __all__ = ["Graph", "Traversal"]
+
+# ------------------------------------------------------------ Rust kernel
+
+_KERNEL = None
+_KERNEL_TRIED = False
+
+
+def _kernel():
+    """The graphkern C ABI (lazy, cached), or None when unavailable."""
+    global _KERNEL, _KERNEL_TRIED
+    if _KERNEL_TRIED:
+        return _KERNEL
+    _KERNEL_TRIED = True
+    here = os.path.dirname(os.path.abspath(__file__))
+    candidates = [
+        os.environ.get("GRAPHKERN_PATH"),
+        os.path.join(here, "libgraphkern.so"),
+        os.path.join(here, "..", "..", "graphkern", "target", "release", "libgraphkern.so"),
+        "/app/libgraphkern.so",
+    ]
+    for path in candidates:
+        if not path or not os.path.isfile(path):
+            continue
+        try:
+            lib = ctypes.CDLL(path)
+            U, D = ctypes.c_uint, ctypes.c_double
+            SZ = ctypes.c_size_t
+            lib.gk_pagerank.argtypes = [SZ, ctypes.POINTER(U), SZ, ctypes.POINTER(U), SZ, D, U, D, ctypes.POINTER(D)]
+            lib.gk_ppr.argtypes = [SZ, ctypes.POINTER(U), SZ, ctypes.POINTER(U), SZ, ctypes.POINTER(U), SZ, D, U, D, ctypes.POINTER(D)]
+            lib.gk_betweenness.argtypes = [SZ, ctypes.POINTER(U), SZ, ctypes.POINTER(U), SZ, ctypes.POINTER(D)]
+            lib.gk_pagerank.restype = lib.gk_ppr.restype = lib.gk_betweenness.restype = ctypes.c_int
+            _KERNEL = lib
+            break
+        except OSError:
+            continue
+    return _KERNEL
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS graph_nodes (
@@ -40,6 +78,11 @@ CREATE INDEX IF NOT EXISTS idx_graph_nodes_kind ON graph_nodes(kind);
 CREATE INDEX IF NOT EXISTS idx_graph_edges_src ON graph_edges(src);
 CREATE INDEX IF NOT EXISTS idx_graph_edges_dst ON graph_edges(dst);
 """
+
+
+def kernel_name() -> str:
+    """'rust' when the compiled kernel is loaded, else 'python'."""
+    return "rust" if _kernel() is not None else "python"
 
 
 class Traversal:
@@ -197,18 +240,52 @@ class Graph:
 
     # ------------------------------------------------------------ analytics
 
-    def pagerank(self, damping: float = 0.85, iterations: int = 50, tol: float = 1e-10):
-        """Power-iteration PageRank, dangling mass redistributed."""
+    def _csr(self, dedup: bool = False):
+        """(nodes, offsets, targets) — out-CSR over the edge table, node
+        order sorted. With dedup=True parallel (src,dst) pairs collapse
+        (BFS semantics); otherwise multiplicities are kept (weight-like
+        semantics, matching the historical Python PageRank)."""
         nodes = self._node_ids()
-        if not nodes:
-            return {}
         idx = {node: i for i, node in enumerate(nodes)}
-        n = len(nodes)
-        out_adj: list[list[int]] = [[] for _ in range(n)]
+        adj: list[list[int]] = [[] for _ in nodes]
         for row in self._edge_rows():
             s, d = idx.get(row["src"]), idx.get(row["dst"])
             if s is not None and d is not None:
-                out_adj[s].append(d)
+                adj[s].append(d)
+        if dedup:
+            adj = [sorted(set(a)) for a in adj]
+        offsets = array("I", [0])
+        targets = array("I")
+        for a in adj:
+            targets.extend(a)
+            offsets.append(len(targets))
+        return nodes, offsets, targets
+
+    @staticmethod
+    def _cbuf(a: array):
+        t = ctypes.c_uint if a.typecode == "I" else ctypes.c_double
+        return (t * len(a)).from_buffer(a) if len(a) else None
+
+    def pagerank(self, damping: float = 0.85, iterations: int = 50, tol: float = 1e-10):
+        """Power-iteration PageRank, dangling mass redistributed."""
+        nodes, offsets, targets = self._csr()
+        if not nodes:
+            return {}
+        lib = _kernel()
+        if lib is not None:
+            try:
+                ob = array("d", bytes(8 * len(nodes)))
+                rc = lib.gk_pagerank(
+                    len(nodes), self._cbuf(offsets), len(offsets),
+                    self._cbuf(targets), len(targets),
+                    damping, max(1, iterations), tol, self._cbuf(ob),
+                )
+                if rc == 0:
+                    return dict(zip(nodes, ob))
+            except Exception:
+                pass  # fall through to the pure-Python path
+        n = len(nodes)
+        out_adj = [list(targets[offsets[i] : offsets[i + 1]]) for i in range(n)]
         ranks = [1.0 / n] * n
         for _ in range(iterations):
             dangling = sum(ranks[i] for i in range(n) if not out_adj[i])
@@ -224,6 +301,117 @@ class Graph:
             if delta < tol:
                 break
         return {nodes[i]: ranks[i] for i in range(n)}
+
+    def personalized_pagerank(
+        self,
+        seeds,
+        damping: float = 0.85,
+        iterations: int = 50,
+        tol: float = 1e-10,
+    ):
+        """PPR from a seed set: teleport mass spread uniformly over the
+        seeds, dangling mass returned to the seed distribution. Scores sum
+        to 1 (when any seed exists in the graph)."""
+        nodes, offsets, targets = self._csr()
+        idx = {node: i for i, node in enumerate(nodes)}
+        seed_idx = sorted({idx[s] for s in seeds if s in idx})
+        if not nodes or not seed_idx:
+            return {}
+        lib = _kernel()
+        if lib is not None:
+            try:
+                sb = array("I", seed_idx)
+                ob = array("d", bytes(8 * len(nodes)))
+                rc = lib.gk_ppr(
+                    len(nodes), self._cbuf(offsets), len(offsets),
+                    self._cbuf(targets), len(targets),
+                    self._cbuf(sb), len(seed_idx),
+                    damping, max(1, iterations), tol, self._cbuf(ob),
+                )
+                if rc == 0:
+                    return dict(zip(nodes, ob))
+            except Exception:
+                pass
+        n = len(nodes)
+        out_adj = [list(targets[offsets[i] : offsets[i + 1]]) for i in range(n)]
+        teleport = [0.0] * n
+        for i in seed_idx:
+            teleport[i] += 1.0 / len(seed_idx)
+        dangling_seed = sum(teleport[i] for i in range(n) if not out_adj[i])
+        p = teleport[:]
+        for _ in range(iterations):
+            dangling = sum(p[i] for i in range(n) if not out_adj[i])
+            new = [
+                (1 - damping) * teleport[i]
+                + damping * dangling_seed * teleport[i]
+                + damping * dangling * teleport[i]
+                for i in range(n)
+            ]
+            for s, outs in enumerate(out_adj):
+                if outs:
+                    share = damping * p[s] / len(outs)
+                    for d in outs:
+                        new[d] += share
+            delta = sum(abs(new[i] - p[i]) for i in range(n))
+            p = new
+            if delta < tol:
+                break
+        return {nodes[i]: p[i] for i in range(n)}
+
+    def related(self, node_id: str, k: int = 8) -> list[str]:
+        """Nodes most associated with node_id by personalized PageRank,
+        excluding the node itself — recommendation-style 'more like this'."""
+        scores = self.personalized_pagerank([node_id])
+        scores.pop(node_id, None)
+        return [n for n, _ in sorted(scores.items(), key=lambda kv: (-kv[1], kv[0]))[:max(0, k)]]
+
+    def betweenness_centrality(self) -> dict[str, float]:
+        """Raw (unnormalized) Brandes betweenness on the directed deduped
+        graph — how often a node sits on shortest paths between others."""
+        nodes, offsets, targets = self._csr(dedup=True)
+        if not nodes:
+            return {}
+        lib = _kernel()
+        if lib is not None:
+            try:
+                ob = array("d", bytes(8 * len(nodes)))
+                rc = lib.gk_betweenness(
+                    len(nodes), self._cbuf(offsets), len(offsets),
+                    self._cbuf(targets), len(targets), self._cbuf(ob),
+                )
+                if rc == 0:
+                    return dict(zip(nodes, ob))
+            except Exception:
+                pass
+        # Pure-Python Brandes fallback.
+        n = len(nodes)
+        out_adj = [sorted(set(targets[offsets[i] : offsets[i + 1]])) for i in range(n)]
+        cb = [0.0] * n
+        for s in range(n):
+            dist = [-1] * n
+            sigma = [0.0] * n
+            delta = [0.0] * n
+            pred: list[list[int]] = [[] for _ in range(n)]
+            dist[s] = 0
+            sigma[s] = 1.0
+            order = [s]
+            queue = deque([s])
+            while queue:
+                u = queue.popleft()
+                for v in out_adj[u]:
+                    if dist[v] < 0:
+                        dist[v] = dist[u] + 1
+                        queue.append(v)
+                        order.append(v)
+                    if dist[v] == dist[u] + 1:
+                        sigma[v] += sigma[u]
+                        pred[v].append(u)
+            for w in reversed(order):
+                for v in pred[w]:
+                    delta[v] += (sigma[v] / sigma[w]) * (1.0 + delta[w])
+                if w != s:
+                    cb[w] += delta[w]
+        return {nodes[i]: cb[i] for i in range(n)}
 
     def communities(self, iterations: int = 8) -> dict[str, str]:
         """Weighted label propagation on the undirected view (deterministic:
