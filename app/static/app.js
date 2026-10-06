@@ -159,6 +159,7 @@ const els = {
   settingsCustomModel: $("#settings-custom-model"),
   usageOpenLink: $("#usage-open-link"),
   usageBtn: $("#usage-btn"),
+  statsBtn: $("#stats-btn"),
   usageModal: $("#usage-modal"),
   usageClose: $("#usage-close"),
   usageSummary: $("#usage-summary"),
@@ -2719,6 +2720,7 @@ function renderUsageChart(data) {
 }
 
 els.usageBtn.addEventListener("click", openUsage);
+els.statsBtn.addEventListener("click", () => window.open("/stats.html", "_blank"));
 els.usageOpenLink.addEventListener("click", (e) => {
   e.preventDefault();
   openUsage();

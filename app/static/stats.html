@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Usage — flexchat.top</title>
+<style>
+  :root { --bg:#0f1420; --bg2:#171e2e; --bg3:#1f2940; --border:#2a3550; --text:#e6eaf2; --muted:#8b96ad; --accent:#4f8cff; --success:#3ddc84; --warn:#ffb86b; }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  body { background:var(--bg); color:var(--text); font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; padding:24px; max-width:1100px; margin:0 auto; }
+  a { color:var(--accent); text-decoration:none; }
+  h1 { font-size:20px; margin-bottom:2px; }
+  h2 { font-size:14px; color:var(--muted); text-transform:uppercase; letter-spacing:.06em; margin:26px 0 10px; }
+  .sub { color:var(--muted); font-size:13px; margin-bottom:18px; }
+  .cards { display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:10px; margin:14px 0; }
+  .card { background:var(--bg2); border:1px solid var(--border); border-radius:10px; padding:12px 14px; }
+  .card .v { font-size:20px; font-weight:600; margin-top:2px; }
+  .card .k { color:var(--muted); font-size:11px; text-transform:uppercase; letter-spacing:.06em; }
+  .panel { background:var(--bg2); border:1px solid var(--border); border-radius:10px; padding:14px; margin-bottom:6px; }
+  canvas { display:block; width:100%; }
+  table { width:100%; border-collapse:collapse; font-size:13px; }
+  th { color:var(--muted); font-size:11px; text-transform:uppercase; letter-spacing:.06em; text-align:left; padding:6px 8px; border-bottom:1px solid var(--border); }
+  td { padding:6px 8px; border-bottom:1px solid var(--bg3); word-break:break-word; }
+  tr:last-child td { border-bottom:none; }
+  td.num, th.num { text-align:right; white-space:nowrap; }
+  .bar-cell { position:relative; }
+  .bar-cell .bar { position:absolute; left:0; top:4px; bottom:4px; background:rgba(79,140,255,.18); border-radius:4px; z-index:0; }
+  .bar-cell span { position:relative; z-index:1; }
+  .badge { display:inline-block; background:var(--bg3); border:1px solid var(--border); border-radius:8px; padding:2px 8px; font-size:11px; color:var(--muted); margin-right:6px; }
+  .badge.ok { color:var(--success); border-color:rgba(61,220,132,.4); }
+  .badge.bad { color:var(--warn); border-color:rgba(255,184,107,.4); }
+  .controls { display:flex; gap:8px; align-items:center; margin-bottom:14px; }
+  select { background:var(--bg3); color:var(--text); border:1px solid var(--border); border-radius:8px; padding:6px 10px; font-size:13px; }
+  #msg { color:var(--muted); padding:30px 0; text-align:center; }
+  .legend { display:flex; gap:14px; font-size:12px; color:var(--muted); margin-top:8px; flex-wrap:wrap; }
+  .legend i { display:inline-block; width:10px; height:10px; border-radius:2px; margin-right:5px; vertical-align:-1px; }
+</style>
+</head>
+<body>
+  <h1>Usage dashboard</h1>
+  <div class="sub">flexchat.top — cost and tokens across live chat and batches</div>
+  <div class="controls">
+    <label class="sub" for="range">Period:</label>
+    <select id="range">
+      <option value="7">Last 7 days</option>
+      <option value="30" selected>Last 30 days</option>
+      <option value="90">Last 90 days</option>
+      <option value="365">Last year</option>
+    </select>
+    <a href="/" class="sub">← back to chat</a>
+  </div>
+  <div id="msg">loading…</div>
+  <div id="content" style="display:none">
+    <div class="cards" id="cards"></div>
+
+    <h2>Daily tokens &amp; cost</h2>
+    <div class="panel"><canvas id="daily" height="220"></canvas>
+      <div class="legend">
+        <span><i style="background:#4f8cff"></i> total tokens</span>
+        <span><i style="background:#ffb86b"></i> cost, $</span>
+      </div>
+    </div>
+
+    <h2>By model</h2>
+    <div class="panel"><table id="models"></table></div>
+
+    <h2>Top conversations</h2>
+    <div class="panel"><table id="convs"></table></div>
+
+    <h2>Recent batches</h2>
+    <div class="panel"><table id="batches"></table></div>
+  </div>
+<script>
+const $ = (id) => document.getElementById(id);
+const token = localStorage.getItem("bc_token");
+if (!token) {
+  $("msg").textContent = "No token — open https://flexchat.top first, log in, then come back.";
+  throw new Error("no token");
+}
+async function api(path) {
+  const r = await fetch(path, { headers: { Authorization: "Bearer " + token } });
+  if (r.status === 401) throw new Error("unauthorized");
+  if (!r.ok) throw new Error("HTTP " + r.status);
+  return r.json();
+}
+const fmtCost = (c) => c >= 1 ? "$" + c.toFixed(2) : "$" + c.toFixed(4).replace(/0+$/, "").replace(/\.$/, "");
+const fmtN = (n) => n >= 1e6 ? (n/1e6).toFixed(1) + "M" : n >= 1e3 ? (n/1e3).toFixed(1) + "k" : String(n);
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (ch) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[ch]));
+
+function drawDaily(buckets) {
+  const cv = $("daily"), dpr = window.devicePixelRatio || 1;
+  const W = cv.clientWidth, H = 220;
+  cv.width = W * dpr; cv.height = H * dpr;
+  const ctx = cv.getContext("2d"); ctx.scale(dpr, dpr);
+  ctx.clearRect(0, 0, W, H);
+  const padL = 46, padR = 46, padT = 12, padB = 26;
+  const iw = W - padL - padR, ih = H - padT - padB;
+  const maxTok = Math.max(1, ...buckets.map(b => b.total));
+  const maxCost = Math.max(1e-6, ...buckets.map(b => b.cost));
+  const n = buckets.length, bw = iw / n;
+  // gridlines
+  ctx.strokeStyle = "#1f2940"; ctx.fillStyle = "#8b96ad"; ctx.font = "10px sans-serif";
+  for (let i = 0; i <= 4; i++) {
+    const y = padT + ih - (ih * i) / 4;
+    ctx.beginPath(); ctx.moveTo(padL, y); ctx.lineTo(W - padR, y); ctx.stroke();
+    ctx.textAlign = "right";
+    ctx.fillText(fmtN(Math.round(maxTok * i / 4)), padL - 6, y + 3);
+    ctx.textAlign = "left";
+    ctx.fillText("$" + (maxCost * i / 4).toFixed(maxCost < 1 ? 2 : 1), W - padR + 6, y + 3);
+  }
+  buckets.forEach((b, i) => {
+    const h = (b.total / maxTok) * ih;
+    ctx.fillStyle = "#4f8cff";
+    ctx.fillRect(padL + i * bw + 1, padT + ih - h, Math.max(1, bw - 2), h);
+  });
+  // cost line
+  ctx.strokeStyle = "#ffb86b"; ctx.lineWidth = 1.5; ctx.beginPath();
+  buckets.forEach((b, i) => {
+    const x = padL + i * bw + bw / 2, y = padT + ih - (b.cost / maxCost) * ih;
+    i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+  });
+  ctx.stroke();
+  // x labels (sparse)
+  ctx.fillStyle = "#8b96ad"; ctx.textAlign = "center";
+  const step = Math.ceil(n / 8);
+  buckets.forEach((b, i) => {
+    if (i % step === 0) ctx.fillText(b.date.slice(5), padL + i * bw + bw / 2, H - 8);
+  });
+}
+
+function modelTable(rows) {
+  const maxCost = Math.max(1e-9, ...rows.map(r => r.cost));
+  $("models").innerHTML =
+    "<tr><th>Model</th><th class='num'>Cost</th><th class='num'>Tokens</th><th class='num'>Msgs</th></tr>" +
+    rows.map(r => `<tr>
+      <td class="bar-cell"><div class="bar" style="width:${(r.cost / maxCost * 100).toFixed(1)}%"></div><span>${esc(r.model)}</span></td>
+      <td class="num">${fmtCost(r.cost)}</td><td class="num">${fmtN(r.total)}</td><td class="num">${r.messages}</td></tr>`).join("");
+}
+
+function convTable(rows) {
+  $("convs").innerHTML = rows.length ? (
+    "<tr><th>Conversation</th><th></th><th class='num'>Cost</th><th class='num'>Tokens</th><th class='num'>Msgs</th></tr>" +
+    rows.map(c => `<tr>
+      <td>${esc(c.title)}</td>
+      <td>${c.kind === "batch" ? '<span class="badge">batch</span>' : ""}</td>
+      <td class="num">${fmtCost(c.cost)}</td><td class="num">${fmtN(c.total)}</td><td class="num">${c.messages}</td></tr>`).join("")
+  ) : "<tr><td style='color:var(--muted)'>No messages in this period.</td></tr>";
+}
+
+function batchTable(rows) {
+  $("batches").innerHTML = rows.length ? (
+    "<tr><th>Title</th><th>Model</th><th>Status</th><th class='num'>Items</th><th class='num'>Created</th></tr>" +
+    rows.map(b => `<tr>
+      <td>${esc(b.title)}</td><td>${esc(b.model)}</td>
+      <td><span class="badge ${b.status === "completed" ? "ok" : b.status === "pending" || b.status === "in_progress" ? "" : "bad"}">${esc(b.status)}</span></td>
+      <td class="num">${b.completed_items}/${b.total_items}${b.failed_items ? ` <span style="color:var(--warn)">(${b.failed_items} failed)</span>` : ""}</td>
+      <td class="num">${b.created_at ? b.created_at.slice(0, 16).replace("T", " ") : "—"}</td></tr>`).join("")
+  ) : "<tr><td style='color:var(--muted)'>No batch jobs yet.</td></tr>";
+}
+
+async function load() {
+  const days = parseInt($("range").value, 10) || 30;
+  $("msg").style.display = ""; $("content").style.display = "none";
+  $("msg").textContent = "loading…";
+  try {
+    const d = await api(`/api/stats/overview?days=${days}`);
+    $("msg").style.display = "none"; $("content").style.display = "";
+    const t = d.totals;
+    $("cards").innerHTML = `
+      <div class="card"><div class="k">Total cost</div><div class="v">${fmtCost(t.cost)}</div></div>
+      <div class="card"><div class="k">Tokens</div><div class="v">${fmtN(t.tokens)}</div></div>
+      <div class="card"><div class="k">Answers</div><div class="v">${fmtN(t.messages)}</div></div>
+      <div class="card"><div class="k">Avg / answer</div><div class="v">${fmtCost(t.avg_cost_per_message)}</div></div>`;
+    drawDaily(d.daily);
+    modelTable(d.models);
+    convTable(d.top_conversations);
+    batchTable(d.batches);
+  } catch (e) {
+    $("msg").textContent = "Failed to load: " + e.message;
+  }
+}
+$("range").addEventListener("change", load);
+window.addEventListener("resize", () => { if ($("content").style.display !== "none") load(); });
+load();
+</script>
+</body>
+</html>

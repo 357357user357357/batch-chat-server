@@ -585,3 +585,90 @@ def test_owner_email_binding_and_email_login(saved_keys):
 
     with SessionLocal() as db:
         assert db.get(Account, squatter.json()["account_id"]) is not None
+
+
+# ---------------------------------------------------------------------------
+# /api/stats/overview (usage dashboard: daily buckets, models, convs, batches)
+# ---------------------------------------------------------------------------
+
+def test_stats_overview_aggregates_models_and_conversations():
+    from datetime import datetime, timedelta
+
+    from app.models import Message
+    from app.models import utcnow
+
+    headers = auth_headers()
+    conv = client.post(
+        "/api/conversations", headers=headers, json={"title": "ovw-chat"}
+    ).json()
+    batch_conv = client.post(
+        "/api/conversations", headers=headers, json={"title": "ovw-batch"}
+    ).json()
+    from app.models import Conversation as _Conv
+
+    with SessionLocal() as db:
+        db.get(_Conv, batch_conv["id"]).kind = "batch"
+        db.commit()
+
+    today = utcnow().replace(hour=12, minute=0, second=0, microsecond=0)
+    rows = [
+        # (conversation, model, prompt, completion, total, cost)
+        (conv["id"], "glm-5.3", 100, 50, 150, 0.010),
+        (conv["id"], "glm-5.3", 200, 100, 300, 0.020),
+        (conv["id"], "glm-5.3-flash", 10, 5, 15, 0.001),
+        (batch_conv["id"], "glm-5.3-flashx", 500, 250, 750, 0.100),
+    ]
+    with SessionLocal() as db:
+        for cid, model, prompt, completion, total, cost in rows:
+            db.add(Message(
+                conversation_id=cid,
+                role="assistant",
+                content=f"ovw-{cid}-{model}-{cost}",
+                model=model,
+                tokens_prompt=prompt,
+                tokens_completion=completion,
+                total_tokens=total,
+                cost=cost,
+                created_at=today,
+            ))
+        db.commit()
+
+    resp = client.get("/api/stats/overview?days=7", headers=headers)
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+
+    # Full day range, zero-filled.
+    assert len(body["daily"]) == 7
+    today_bucket = next(b for b in body["daily"] if b["date"] == today.date().isoformat())
+    assert today_bucket["messages"] >= 4
+    assert today_bucket["cost"] >= 0.131
+
+    models = {m["model"]: m for m in body["models"]}
+    assert models["glm-5.3"]["messages"] >= 2
+    assert models["glm-5.3"]["cost"] >= 0.030
+    assert models["glm-5.3-flashx"]["total"] >= 750
+    # Ordered by cost desc: the most expensive model leads.
+    assert body["models"][0]["cost"] >= body["models"][-1]["cost"]
+
+    convs = {c["title"]: c for c in body["top_conversations"]}
+    assert convs["ovw-batch"]["kind"] == "batch"
+    assert convs["ovw-batch"]["cost"] >= 0.100
+    assert convs["ovw-chat"]["messages"] >= 3
+
+    totals = body["totals"]
+    assert totals["messages"] >= 4
+    assert totals["tokens"] >= 1215
+    assert 0 < totals["avg_cost_per_message"] <= totals["cost"]
+
+    # Cleanup so other modules' counts are unaffected.
+    import sqlite3
+
+    from app.database import engine
+    with sqlite3.connect(engine.url.database) as conn:
+        for cid in (conv["id"], batch_conv["id"]):
+            conn.execute("DELETE FROM messages WHERE conversation_id=?", (cid,))
+            conn.execute("DELETE FROM conversations WHERE id=?", (cid,))
+
+
+def test_stats_overview_requires_auth():
+    assert client.get("/api/stats/overview").status_code in (401, 403)
