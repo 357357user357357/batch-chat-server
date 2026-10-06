@@ -60,3 +60,8 @@ A buggy client release pushed whole dialog lists with the same dialog repeated 3
 - Semantics parity is tested (`test_graphdb.py` forces the fallback via monkeypatch and compares both paths to 1e-9). PPR note: the seed need NOT rank first — a confluence node taking flow from several paths can outrank it (test documents this).
 - API additions: `/api/graph/overview` → `hubs` (top-10 betweenness, score>0) + `kernel`; `/api/graph/node/{id}` → `betweenness` + `related` (PPR top-8, seed excluded, `{id,label,kind}`). graph.html renders bridge rings (blue outline = bt>0), a "⇄ Bridges" start panel, "✦ related" list, and the kernel badge in the HUD.
 - Dockerfile has a `rust:1-slim` builder stage → `/app/app/services/libgraphkern.so`. Rebuild after changing Rust code; `graphkern/target/` is gitignored.
+
+## L-values (math_modular.py, /api/math/lvalue, heckelab.html)
+- Two honest routes: `l_value(f,s,terms)` = truncated Dirichlet series (converges only right of the wall s > (weight+1)/2 for cusp eigenforms); `completed_l(f,s)` = Λ(f,s) = ∫₀^∞ f(iy)y^(s-1)dy folded onto [1,∞) via f(i/y)=i^k y^k f(iy) — convergent at EVERY s (cusp, level 1 only). `l_any` picks the right route.
+- Functional equation Λ(s) = i^k Λ(k−s) is checked numerically in tests AND returned to the UI as `functional_eq_abs_diff`. Gotcha: Λ(s)=Λ(k−s) does NOT mean L(s)=L(k−s) — Γ/ (2π)^s factors differ (a test once confused them).
+- Endpoint /api/math/lvalue (auth-gated like hecke): delta → full treatment (dirichlet|mellin method + Λ + check); eisenstein → truncated series only, 422 unless s > k (closed form ζ(s)ζ(s−k+1) documented, not computed).

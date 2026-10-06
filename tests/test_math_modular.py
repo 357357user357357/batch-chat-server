@@ -1,6 +1,9 @@
 """Hecke-operator math pinned against classical values (exact checks)."""
 
+import math
 from fractions import Fraction
+
+import pytest
 
 from app.services import math_modular as mm
 
@@ -95,3 +98,60 @@ def test_level_guard():
         pass
     else:
         raise AssertionError("expected NotImplementedError for level != 1")
+
+
+# ------------------------------------------------------------------ L-values
+
+def test_l_value_dirichlet_truncation_basics():
+    mm.delta(60)  # warm nothing; just exercise import path
+    d = mm.delta(120)
+    v = mm.l_value(d, 9.0)
+    assert v != 0.0
+    # truncation monotonicity: more terms move the value toward convergence
+    v2 = mm.l_value(d, 9.0, terms=119)
+    assert abs(v2 - v) < 1e-6
+    with pytest.raises(ValueError):
+        mm.l_value(d, 0.0)
+    with pytest.raises(ValueError):
+        mm.l_value(mm.eisenstein(12, 20), 9.0)  # nonzero constant term
+
+
+def test_dirichlet_and_mellin_routes_agree():
+    d = mm.delta(600)
+    s = 9.0
+    direct = mm.l_value(d, s, terms=599)
+    via_mellin = mm.completed_l(d, s).real * (2 * math.pi) ** s / math.gamma(s)
+    assert abs(direct - via_mellin) < 1e-6 * max(1.0, abs(direct))
+
+
+def test_completed_l_functional_equation():
+    # Lambda(s) = i^k Lambda(k-s); for k=12 (i^12 = 1) both sides are real
+    # and computed from DIFFERENT integrands — a real numeric check.
+    d = mm.delta(120)
+    lam8 = mm.completed_l(d, 8.0)
+    lam4 = mm.completed_l(d, 4.0)
+    assert abs(lam8.imag) < 1e-9 and abs(lam4.imag) < 1e-9
+    assert abs(lam4.real - lam8.real) < 1e-6 * abs(lam8.real)
+    lam7 = mm.completed_l(d, 7.0)
+    lam5 = mm.completed_l(d, 5.0)
+    assert abs(lam5.real - lam7.real) < 1e-6 * abs(lam7.real)
+
+
+def test_l_any_reaches_the_critical_strip():
+    d = mm.delta(600)
+    # right of the wall: equals the Dirichlet truncation
+    assert abs(mm.l_any(d, 9.0) - mm.l_value(d, 9.0, terms=599)) < 1e-9
+    # critical strip: converges to the same value the Mellin route gives
+    s = 6.0
+    expected = mm.completed_l(d, s).real * (2 * math.pi) ** s / math.gamma(s)
+    assert abs(mm.l_any(d, s) - expected) < 1e-12
+    # L(Delta, 6) is not zero and not absurdly large (tau ~ n^5.5 decay)
+    assert 0.0 < abs(expected) < 100.0
+
+
+def test_completed_l_requires_cusp_and_level_one():
+    with pytest.raises(ValueError):
+        mm.completed_l(mm.eisenstein(12, 20), 6.0)
+    f = mm.QExpansion(12, [0, 1, 1], level=2)
+    with pytest.raises(NotImplementedError):
+        mm.completed_l(f, 6.0)

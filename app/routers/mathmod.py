@@ -113,3 +113,72 @@ def hecke_endpoint(
         "expected_eigenvalue": expected,
         "is_eigen": is_eigen,
     }
+
+
+class LValueRequest(BaseModel):
+    form: str = Field("delta", description='"delta" or "eisenstein"')
+    weight: int | None = Field(None, description="even k in [4, 24] for eisenstein")
+    s: float = Field(6.0, gt=0.0, le=30.0)
+    precision: int = Field(300, ge=2, le=_MAX_PRECISION)
+
+
+@router.post("/lvalue")
+def lvalue_endpoint(
+    payload: LValueRequest, account_id: str = Depends(get_account_id)
+) -> dict:
+    """L(f, s) — Dirichlet truncation where it converges, Mellin-integral
+    analytic continuation (via the modular functional equation) everywhere
+    else. Delta only gets the full treatment; Eisenstein gets the honest
+    truncated series (it converges for s > k; the closed form is
+    zeta(s) zeta(s-k+1))."""
+    if payload.form == "delta":
+        f = mm.delta(payload.precision)
+        weight = 12
+        wall = (weight + 1) / 2.0
+        if payload.s > wall:
+            method = "dirichlet"
+            value = mm.l_value(f, payload.s)
+        else:
+            method = "mellin"
+            value = mm.l_any(f, payload.s)
+        lam = mm.completed_l(f, payload.s)
+        lam_ref = mm.completed_l(f, weight - payload.s)
+        out = {
+            "form": "delta",
+            "weight": weight,
+            "s": payload.s,
+            "L": value,
+            "method": method,
+            "lambda_real": lam.real,
+            "lambda_imag": lam.imag,
+            # independent numeric check of Lambda(s) = i^k Lambda(k-s)
+            "functional_eq_abs_diff": abs(lam - complex(0, 1) ** weight * lam_ref),
+        }
+        return out
+
+    if payload.form == "eisenstein":
+        if (
+            payload.weight is None
+            or payload.weight % 2
+            or not (_MIN_WEIGHT <= payload.weight <= _MAX_WEIGHT)
+        ):
+            raise HTTPException(
+                status_code=422,
+                detail=f"eisenstein needs an even weight in [{_MIN_WEIGHT}, {_MAX_WEIGHT}]",
+            )
+        if payload.s <= payload.weight:
+            raise HTTPException(
+                status_code=422,
+                detail="Eisenstein Dirichlet series converges only for s > k (closed form: zeta(s) zeta(s-k+1))",
+            )
+        f = mm.eisenstein(payload.weight, payload.precision)
+        return {
+            "form": "eisenstein",
+            "weight": payload.weight,
+            "s": payload.s,
+            "L": mm.l_value(f, payload.s),
+            "method": "dirichlet",
+            "convergent": True,
+        }
+
+    raise HTTPException(status_code=422, detail='form must be "delta" or "eisenstein"')

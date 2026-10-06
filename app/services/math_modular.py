@@ -295,3 +295,107 @@ def hecke(f: QExpansion, n: int) -> QExpansion:
     for p, e in sorted(prime_factorization(n).items()):
         result = _hecke_prime_power(result, p, e)
     return result
+
+
+# ------------------------------------------------------------- L-functions
+#
+# Honest floating-point L-values for level-1 forms, two independent routes:
+#
+#   l_value(f, s, terms)      partial Dirichlet series  sum a(n) n^-s
+#                             — only meaningful where it converges
+#                             (s > (weight+1)/2 for normalized cusp forms);
+#                             it is a truncation, and we say so.
+#
+#   completed_l(f, s, steps)  the completed Mellin integral
+#                             Lambda(f,s) = int_0^inf f(iy) y^(s-1) dy,
+#                             folded onto [1, inf) via modularity
+#                             f(i/y) = i^k y^k f(iy):
+#                               Lambda(f,s) = int_1^inf f(iy)(y^(s-1)
+#                                                           + i^k y^(k-s-1)) dy
+#                             — convergent for EVERY s, including the
+#                             critical strip. Cusp forms only (a_0 = 0),
+#                             level 1 only (the split uses full SL2Z
+#                             modularity).
+#
+# The two routes agree where both apply; and Lambda(f, s) = i^k Lambda(f, k-s)
+# gives the functional equation, so l_any reaches the critical strip too.
+
+import math as _math
+
+
+def l_value(f: "QExpansion", s: float, terms: int | None = None) -> float:
+    """Truncated Dirichlet series sum_{n=1..terms} a(n) / n^s as float.
+
+    A truncation, not an analytic continuation: meaningful where the series
+    converges (s > (weight+1)/2 for cusp eigenforms like Delta; s > weight
+    for Eisenstein coefficients sigma_{k-1}). `terms` defaults to the
+    expansion precision.
+    """
+    if s <= 0:
+        raise ValueError("s must be > 0")
+    if f[0] != 0:
+        raise ValueError("Dirichlet series of a form with a nonzero constant term diverges")
+    n_terms = f.precision() - 1 if terms is None else min(terms, f.precision() - 1)
+    total = 0.0
+    for n in range(1, n_terms + 1):
+        a = f[n]
+        if a:
+            total += float(a) / n**s
+    return total
+
+
+def _f_at_iy(f: "QExpansion", y: float) -> float:
+    """sum_{n>=1} a(n) e^{-2 pi n y} — the cusp-form value on the imaginary
+    axis, from the stored coefficients (geometrically decaying in y >= 1)."""
+    total = 0.0
+    for n in range(1, f.precision()):
+        a = f[n]
+        if a:
+            total += float(a) * _math.exp(-2.0 * _math.pi * n * y)
+    return total
+
+
+def completed_l(f: "QExpansion", s: float, steps: int = 2048) -> complex:
+    """Lambda(f, s) = int_0^inf f(iy) y^{s-1} dy for a level-1 cusp form.
+
+    Computed on [1, inf) via modularity (see module notes), so it works at
+    every s — inside the critical strip included. Composite Simpson with
+    `steps` even subintervals on [1, 25]; the exp(-2 pi y) decay makes the
+    tail beyond 25 far below double precision.
+    """
+    if f.level != 1:
+        raise NotImplementedError("completed_l is implemented for level 1 only")
+    if f[0] != 0:
+        raise ValueError("completed_l requires a cusp form (constant term 0)")
+    k = f.weight
+    if steps % 2:
+        steps += 1
+    ik = complex(0, 1) ** k
+    y_max = 25.0
+    h = (y_max - 1.0) / steps
+
+    def integrand(y: float) -> complex:
+        return _f_at_iy(f, y) * (y ** (s - 1.0) + ik * y ** (k - s - 1.0))
+
+    total = integrand(1.0) + integrand(y_max)
+    for i in range(1, steps):
+        total += integrand(1.0 + i * h) * (4 if i % 2 else 2)
+    return total * h / 3.0
+
+
+def l_any(f: "QExpansion", s: float, terms: int | None = None, steps: int = 2048) -> float:
+    """L(f, s) at ANY positive s, level-1 cusp forms.
+
+    Right of the convergence wall (s > (weight+1)/2) this is the honest
+    partial Dirichlet sum; at or left of it, the value is the analytic
+    continuation read off the convergent Mellin integral (completed_l).
+    Cross-check: the functional equation Lambda(f, s) = i^k Lambda(f, k-s)
+    holds between two completed_l evaluations with different integrands.
+    """
+    if f.level != 1 or f[0] != 0:
+        raise ValueError("l_any requires a level-1 cusp form")
+    wall = (f.weight + 1) / 2.0
+    if s > wall:
+        return l_value(f, s, terms)
+    lam = completed_l(f, s, steps)
+    return lam.real * (2.0 * _math.pi) ** s / _math.gamma(s)

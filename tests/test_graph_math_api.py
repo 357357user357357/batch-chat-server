@@ -1,6 +1,7 @@
 """API checks for the graph + math capability endpoints."""
 
 import os
+import math
 
 os.environ.setdefault("APP_PASSWORD", "test")
 os.environ.setdefault("DATABASE_URL", "sqlite:////tmp/bc_test_graphmath.db")
@@ -166,3 +167,50 @@ def test_graph_node_detail_has_betweenness_and_related():
     for item in body["related"]:
         assert set(item) == {"id", "label", "kind"}
         assert item["id"] != node_id
+
+
+def test_lvalue_delta_critical_strip_is_gated_and_sane():
+    headers = auth_headers()
+    r = client.post(
+        "/api/math/lvalue", headers=headers,
+        json={"form": "delta", "s": 6.0, "precision": 120},
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["method"] == "mellin"
+    assert isinstance(body["L"], float) and body["L"] != 0.0
+    # functional equation Lambda(6) = i^12 Lambda(6) — diff must be ~0
+    assert body["functional_eq_abs_diff"] < 1e-6
+
+
+def test_lvalue_delta_convergent_side_matches_dirichlet():
+    headers = auth_headers()
+    r = client.post(
+        "/api/math/lvalue", headers=headers,
+        json={"form": "delta", "s": 9.0, "precision": 300},
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["method"] == "dirichlet"
+    r2 = client.post(
+        "/api/math/lvalue", headers=headers,
+        json={"form": "delta", "s": 3.0, "precision": 300},
+    )
+    assert r2.status_code == 200
+    # functional equation: Lambda(9) = i^12 Lambda(3) = Lambda(3) — the raw
+    # Lambda values must agree (NOT the L values, which legitimately differ)
+    lam9 = body["lambda_real"]
+    lam3 = r2.json()["lambda_real"]
+    assert abs(lam9 - lam3) < 1e-6 * max(1.0, abs(lam9))
+    assert body["functional_eq_abs_diff"] < 1e-6
+
+
+def test_lvalue_rejects_bad_input():
+    headers = auth_headers()
+    assert client.post(
+        "/api/math/lvalue", headers=headers, json={"form": "eisenstein", "weight": 12, "s": 9.0}
+    ).status_code == 422  # s must be > k
+    assert client.post(
+        "/api/math/lvalue", headers=headers, json={"form": "nope", "s": 6.0}
+    ).status_code == 422
+    assert client.post("/api/math/lvalue", json={"form": "delta", "s": 6.0}).status_code in (401, 403)

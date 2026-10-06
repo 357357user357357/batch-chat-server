@@ -78,6 +78,18 @@
     <div id="badges"></div>
     <div class="result" id="result"></div>
   </div>
+
+  <div class="card">
+    <h3 style="margin-bottom:10px">L(f, s) <span class="muted" style="font-size:12px">— Dirichlet series where it converges, Mellin continuation inside the critical strip</span></h3>
+    <div class="row">
+      <div>
+        <label>Point s</label>
+        <input id="ls" type="number" step="0.5" min="0.5" max="30" value="6">
+      </div>
+      <div style="align-self:end"><button id="lgo">Compute L(f, s)</button></div>
+    </div>
+    <div class="result" id="lresult" style="display:none"></div>
+  </div>
   <div id="error"></div>
 </div>
 
@@ -155,6 +167,51 @@ async function apply() {
   }
 }
 
+async function lapply() {
+  $("lgo").disabled = true;
+  $("error").style.display = "none";
+  try {
+    const payload = {
+      form: $("form").value,
+      s: parseFloat($("ls").value),
+      precision: parseInt($("precision").value, 10),
+    };
+    if (payload.form === "eisenstein") payload.weight = parseInt($("weight").value, 10);
+    const resp = await fetch("/api/math/lvalue", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: "Bearer " + token },
+      body: JSON.stringify(payload),
+    });
+    if (resp.status === 401) { $("gate").style.display = "block"; throw new Error("Not signed in"); }
+    const body = await resp.json();
+    if (!resp.ok) throw new Error(body.detail || JSON.stringify(body));
+    const name = body.form === "delta" ? "\\Delta" : `E_{${body.weight}}`;
+    const k = body.weight || 12;
+    let html = "";
+    if (body.lambda_real !== undefined) {
+      html += `<span class="badge">method: <b>${body.method === "mellin" ? "Mellin (critical strip)" : "Dirichlet truncation"}</b></span>`;
+      html += `<span class="badge">Λ(${body.s}) = <b>${body.lambda_real.toPrecision(10)}</b>${Math.abs(body.lambda_imag) > 1e-12 ? " + " + body.lambda_imag.toPrecision(4) + "i" : ""}</span>`;
+      html += `<span class="badge">check Λ(s)=i<sup>${k}</sup>Λ(${k}-s): Δ = <b>${body.functional_eq_abs_diff.toExponential(2)}</b></span>`;
+    } else if (body.convergent) {
+      html += `<span class="badge">Dirichlet truncation (convergent, s &gt; k)</span>`;
+    }
+    katex.render(`L\\left(${name}, ${body.s}\\right) = ${body.L.toPrecision(10)}`, $("lresult"), { displayMode: true, throwOnError: false });
+    $("lresult").insertAdjacentHTML("beforebegin", "");
+    const badgeDiv = document.createElement("div");
+    badgeDiv.innerHTML = html;
+    const card = $("lresult").parentElement;
+    card.querySelectorAll(".lbadges").forEach(e => e.remove());
+    badgeDiv.className = "lbadges";
+    card.insertBefore(badgeDiv, $("lresult"));
+    $("lresult").style.display = "block";
+  } catch (err) {
+    $("error").textContent = String(err.message || err);
+    $("error").style.display = "block";
+  } finally {
+    $("lgo").disabled = false;
+  }
+}
+
 $("go").addEventListener("click", apply);
 document.querySelectorAll(".chip").forEach(chip =>
   chip.addEventListener("click", () => {
@@ -167,6 +224,7 @@ document.querySelectorAll(".chip").forEach(chip =>
 if (token) {
   // auto-run the classic demo so the page never opens empty
   apply();
+  lapply();
 }
 </script>
 </body>
