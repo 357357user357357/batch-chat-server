@@ -39,6 +39,13 @@ function FindProxyForURL(url, host) {
       shExpMatch(host, "*.xn--p1ai") || shExpMatch(host, "xn--p1ai")) {
     return "DIRECT";
   }
+  // Google sign-in works fine from RU IPs and is much faster direct;
+  // the OAuth popup no longer round-trips through the tunnel.
+  if (dnsDomainIs(host, "accounts.google.com") ||
+      dnsDomainIs(host, "accounts.youtube.com") ||
+      dnsDomainIs(host, "myaccount.google.com")) {
+    return "DIRECT";
+  }
   // Private/reserved IP targets stay direct.
   var ip = dnsResolve(host);
   if (ip && isPrivateIp(ip)) {
