@@ -16,7 +16,7 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(levelname)s:%(name)s:%(message)s",
 )
-from app.routers import auth, batches, chat, conversations, export_conversations, graph as graph_router, import_conversations, mathmod, personas, settings as settings_router, stats, sync
+from app.routers import ai_proxy, auth, batches, chat, conversations, export_conversations, graph as graph_router, import_conversations, mathmod, personas, settings as settings_router, stats, sync
 from app.services import cache_keeper
 from app.services.batch_worker import start_batch_worker
 from app.services.cache_keeper import start_cache_keeper
@@ -167,6 +167,7 @@ app.add_middleware(
 )
 
 app.include_router(auth.router)
+app.include_router(ai_proxy.router)
 app.include_router(conversations.router)
 app.include_router(chat.router)
 app.include_router(import_conversations.router)
