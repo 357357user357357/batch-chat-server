@@ -6,7 +6,7 @@
 # server is serving. Keeps KEEP generations on the relay.
 set -uo pipefail
 
-RELAY="root@62.109.10.170"
+RELAY="${BC_RELAY:-root@62.109.10.170}"
 KEY="/root/.ssh/id_ed25519_bc"   # bc-backup-turkey key, installed on the relay
 KEEP=14
 TAG="[bc-dump $(date '+%F %T')]"

@@ -34,4 +34,4 @@ run_check() { # name url human-label
 }
 
 run_check flexchat "https://flexchat.top/" "flexchat.top (main)"
-run_check nextcloud "http://62.109.10.170/index.php/login" "Nextcloud on RU relay"
+run_check nextcloud "http://${BC_RELAY_IP:-62.109.10.170}/index.php/login" "Nextcloud on RU relay"
