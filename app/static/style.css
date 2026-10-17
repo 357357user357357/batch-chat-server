@@ -87,6 +87,9 @@ body {
   color: var(--text);
   font-size: 15px;
   line-height: 1.55;
+  /* The app fills exactly one viewport (.app-view { height: 100vh }); anything
+     page-level that would extend it is a bug — never let the body scroll. */
+  overflow: hidden;
 }
 
 ::selection { background: rgba(79, 140, 255, 0.35); color: #fff; }
